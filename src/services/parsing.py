@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import base64
+import hashlib
 import json
 import logging
 import os
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -38,10 +41,18 @@ def _run_capture(args: list[str], *, timeout: float | None = None, encoding: str
     return proc, stdout, stderr
 
 
+def _command_error_tail(stdout: str, stderr: str, limit: int = 1200) -> str:
+    """外部 CLI 的最后几行通常才包含 traceback / root cause，避免日志只留下启动信息。"""
+    output = (stderr or stdout).strip()
+    return output[-limit:] if output else "<无错误输出>"
+
+
 @dataclass
 class ParsedPage:
     page: int | None  # PDF/PPT 1-based；纯文本/docx 为 None
     text: str
+    # PDF 文档自身定义的页签；和物理页 page、教材中写的 P26 等引用严格分开。
+    pdf_page_label: str = ""
 
 
 @dataclass
@@ -58,12 +69,19 @@ class ParsedBlock:
     caption: str = ""  # 图片/表格说明
     order: int = 0  # 原始顺序（跨页排序用）
     bbox: tuple | None = None
+    pdf_page_label: str = ""
+    textbook_references: tuple[str, ...] = ()
+    # content | annotation | reference | noise。噪声不进入向量库，批注保留为独立证据。
+    content_role: str = "content"
 
 
 @dataclass
 class ParsedDocument:
     pages: list[ParsedPage]
     blocks: list[ParsedBlock] = field(default_factory=list)
+    # 解析链路的轻量可追溯信息：不增加模型调用，随切片写入向量 metadata。
+    parser_name: str = ""
+    parse_quality: float = 0.0
 
     @property
     def full_text(self) -> str:
@@ -72,6 +90,73 @@ class ParsedDocument:
     @property
     def has_blocks(self) -> bool:
         return bool(self.blocks)
+
+
+@dataclass(frozen=True)
+class PDFParseQuality:
+    """用于选择 PDF 解析候选结果的轻量质量信号（不依赖模型调用）。"""
+
+    score: float
+    page_coverage: float
+    chars_per_page: float
+    structure_ratio: float
+    expected_pages: int
+    parsed_pages: int
+
+
+def _pdf_page_count(path: str) -> int:
+    """读取物理页数；失败时返回 0，质量评估仍可继续。"""
+    try:
+        import fitz
+
+        doc = fitz.open(path)
+        try:
+            return doc.page_count
+        finally:
+            doc.close()
+    except Exception:
+        return 0
+
+
+def _assess_pdf_quality(
+    doc: ParsedDocument | None, *, expected_pages: int = 0
+) -> PDFParseQuality:
+    """以文本密度、页覆盖与结构还原评估候选结果，范围固定为 0～1。"""
+    if doc is None:
+        return PDFParseQuality(0.0, 0.0, 0.0, 0.0, expected_pages, 0)
+
+    pages_with_text = [page for page in doc.pages if page.text.strip()]
+    chars = len(re.sub(r"\s", "", doc.full_text))
+    parsed_pages = len(pages_with_text)
+    # Markdown 回退只有一页 None，不能把它误当作仅覆盖原 PDF 的第一页。
+    if expected_pages and any(page.page is None for page in pages_with_text) and chars >= 80:
+        page_coverage = 1.0
+    else:
+        denominator = expected_pages or max(len(doc.pages), 1)
+        page_coverage = min(parsed_pages / denominator, 1.0)
+    chars_per_page = chars / max(expected_pages or parsed_pages, 1)
+    text_density = min(chars_per_page / 160, 1.0)
+    structure_ratio = 1.0 if doc.blocks else (0.65 if chars else 0.0)
+    score = round(0.45 * text_density + 0.40 * page_coverage + 0.15 * structure_ratio, 4)
+    return PDFParseQuality(
+        score=score,
+        page_coverage=round(page_coverage, 4),
+        chars_per_page=round(chars_per_page, 2),
+        structure_ratio=structure_ratio,
+        expected_pages=expected_pages,
+        parsed_pages=parsed_pages,
+    )
+
+
+def _log_pdf_quality(source: str, quality: PDFParseQuality) -> None:
+    logger.info(
+        "PDF 候选质量: %s score=%.2f coverage=%.0f%% chars/page=%.0f structure=%.0f%%",
+        source,
+        quality.score,
+        quality.page_coverage * 100,
+        quality.chars_per_page,
+        quality.structure_ratio * 100,
+    )
 
 
 def _page_num(meta: dict) -> int | None:
@@ -109,6 +194,11 @@ def _pymupdf4llm_kwargs(*, force_ocr: bool | None = None) -> dict:
 def _parse_pdf_pymupdf4llm(path: str, *, force_ocr: bool | None = None) -> ParsedDocument | None:
     import pymupdf4llm
 
+    # pymupdf4llm 调用 Tesseract 时从进程环境读取 TESSDATA_PREFIX。
+    # 配置为空不覆盖用户/系统已有设置。
+    tessdata_prefix = config.parsing.tessdata_prefix
+    if tessdata_prefix:
+        os.environ["TESSDATA_PREFIX"] = tessdata_prefix
     return _pages_from_pymupdf4llm(
         pymupdf4llm.to_markdown(path, **_pymupdf4llm_kwargs(force_ocr=force_ocr))
     )
@@ -119,11 +209,16 @@ def _parse_pdf_fitz(path: str) -> ParsedDocument:
 
     doc = fitz.open(path)
     try:
-        pages = [
-            ParsedPage(page=i, text=t)
-            for i, page in enumerate(doc, 1)
-            if (t := page.get_text().strip())
-        ]
+        pages = []
+        for i, page in enumerate(doc, 1):
+            text = page.get_text().strip()
+            if not text:
+                continue
+            try:
+                label = page.get_label() or ""
+            except Exception:
+                label = ""
+            pages.append(ParsedPage(page=i, text=text, pdf_page_label=label))
         return ParsedDocument(pages)
     finally:
         doc.close()
@@ -189,11 +284,288 @@ def _table_headers(html: str) -> str:
     return " | ".join(c for c in cleaned if c)
 
 
+def _normalize_formula_latex(value: object) -> str:
+    """将不同解析器的公式字段归一为裸 LaTex，避免重复包裹分隔符。"""
+    latex = str(value or "").strip()
+    if latex.startswith("$$") and latex.endswith("$$") and len(latex) >= 4:
+        return latex[2:-2].strip()
+    if latex.startswith("\\[") and latex.endswith("\\]") and len(latex) >= 4:
+        return latex[2:-2].strip()
+    if latex.startswith("\\(") and latex.endswith("\\)") and len(latex) >= 4:
+        return latex[2:-2].strip()
+    if latex.startswith("$") and latex.endswith("$") and len(latex) >= 2:
+        return latex[1:-1].strip()
+    return latex
+
+
+def _formula_latex(block: dict) -> str:
+    """兼容 MinerU / 其他解析器的 latex、math_content、text 等公式字段。"""
+    for key in ("latex", "rec_formula", "formula", "formula_text", "math_content", "math", "content", "text"):
+        value = _normalize_formula_latex(block.get(key))
+        if value:
+            return value
+    return ""
+
+
+def _paddle_result_payloads(result: object) -> list[dict]:
+    """兼容 PaddleOCR 3.x Result 的 json/dict 形态，提取可能含公式的字典。"""
+    payload = getattr(result, "json", result)
+    if callable(payload):
+        payload = payload()
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return []
+    found: list[dict] = []
+
+    def walk(value: object, inherited_page: int | None = None) -> None:
+        if isinstance(value, list):
+            for item in value:
+                walk(item, inherited_page)
+            return
+        if not isinstance(value, dict):
+            return
+        # PaddleOCR 的 page_index/page_idx 均为零基页码；项目内部与 PDF
+        # 其余解析器统一使用一基页码。`page` 则视为已经归一化的一基值。
+        if value.get("page_index") is not None:
+            page = value.get("page_index")
+            zero_based = True
+        elif value.get("page_idx") is not None:
+            page = value.get("page_idx")
+            zero_based = True
+        else:
+            page = value.get("page")
+            zero_based = False
+        try:
+            page = int(page) + 1 if zero_based else int(page)
+        except (TypeError, ValueError):
+            page = inherited_page
+        latex = _formula_latex(value)
+        # 只接受明确的公式输出键，防止把一般文字字段误写成 LaTeX。
+        has_formula_key = any(key in value for key in ("latex", "rec_formula", "formula", "formula_text"))
+        if latex and has_formula_key:
+            item = dict(value)
+            item["_formula_latex"] = latex
+            item["_page"] = page
+            found.append(item)
+        for child in value.values():
+            if isinstance(child, (dict, list)):
+                walk(child, page)
+
+    walk(payload)
+    return found
+
+
+def _formula_bbox(raw: object) -> tuple | None:
+    """兼容 PaddleOCR 的 bbox/coordinate/polygon 输出，统一成 x0,y0,x1,y1。"""
+    if isinstance(raw, (list, tuple)) and len(raw) == 4 and all(
+        isinstance(value, (int, float)) for value in raw
+    ):
+        return _as_bbox(raw)
+    if isinstance(raw, (list, tuple)) and len(raw) >= 4:
+        points = [point for point in raw if isinstance(point, (list, tuple)) and len(point) >= 2]
+        if points:
+            try:
+                xs = [float(point[0]) for point in points]
+                ys = [float(point[1]) for point in points]
+                return min(xs), min(ys), max(xs), max(ys)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _run_formula_worker(path: str) -> list[dict]:
+    """在独立进程运行 PaddleOCR，隔离 Windows 下 Torch/Paddle 的 cuDNN DLL。"""
+    p = config.parsing
+    with tempfile.TemporaryDirectory(prefix="formula_worker_") as tmp:
+        output = Path(tmp) / "payloads.json"
+        args = [
+            sys.executable,
+            "-m",
+            "src.services.formula_worker",
+            "--input",
+            str(Path(path).resolve()),
+            "--output",
+            str(output),
+            "--device",
+            p.formula_recognition_device,
+            "--model",
+            p.formula_recognition_model,
+        ]
+        if p.formula_recognition_enable_mkldnn:
+            args.append("--enable-mkldnn")
+        timeout = p.formula_recognition_timeout or None
+        proc, stdout, stderr = _run_capture(args, timeout=timeout)
+        if proc.returncode != 0:
+            raise RuntimeError(
+                "PaddleOCR 公式子进程退出码 "
+                f"{proc.returncode}: {_command_error_tail(stdout, stderr)}"
+            )
+        if not output.is_file():
+            raise RuntimeError(
+                "PaddleOCR 公式子进程未产出 JSON: "
+                + _command_error_tail(stdout, stderr)
+            )
+        payloads = json.loads(output.read_text(encoding="utf-8"))
+        if not isinstance(payloads, list):
+            raise RuntimeError("PaddleOCR 公式子进程输出格式错误")
+        return [item for item in payloads if isinstance(item, dict)]
+
+
+def _run_formula_pipeline(path: str) -> list[dict]:
+    """运行公式识别；Windows GPU 使用子进程以避免 cuDNN DLL 版本冲突。"""
+    p = config.parsing
+    device = p.formula_recognition_device.strip().lower()
+    if os.name == "nt" and (device == "auto" or device.startswith(("gpu", "cuda"))):
+        logger.info("公式识别使用独立 GPU 子进程: device=%s", p.formula_recognition_device)
+        return _run_formula_worker(path)
+
+    # CPU Torch 与 Paddle 在当前 Windows 环境可按该顺序共存；GPU 路径必须走上面的隔离分支。
+    if os.name == "nt":
+        import torch  # noqa: F401
+
+    from paddleocr import FormulaRecognitionPipeline
+    from src.services.inference_device import resolve_paddle_device
+
+    pipeline = FormulaRecognitionPipeline(
+        device=resolve_paddle_device(p.formula_recognition_device),
+        formula_recognition_model_name=p.formula_recognition_model,
+        enable_mkldnn=p.formula_recognition_enable_mkldnn,
+    )
+    payloads: list[dict] = []
+    for result in pipeline.predict(path):
+        payloads.extend(_paddle_result_payloads(result))
+    return payloads
+
+
+def _enrich_document_with_formulas(doc: ParsedDocument | None, path: str) -> ParsedDocument | None:
+    """对全文补偿公式块；失败时保留原解析结果，不中断文档入库。"""
+    p = config.parsing
+    if not doc or not doc.pages or not p.formula_recognition_enabled:
+        return doc
+    try:
+        payloads = _run_formula_pipeline(path)
+    except Exception as exc:
+        logger.warning("全文公式识别失败，保留原解析文本: %s", exc)
+        return doc
+
+    if not payloads:
+        logger.info("全文公式识别未发现可用 LaTeX: %s", Path(path).name)
+        return doc
+
+    # 回退解析页先显式建为文本块；否则 has_blocks=True 后结构化切片会只保留公式而丢正文。
+    blocks = list(doc.blocks) or [
+        _annotate_block(
+            ParsedBlock(
+                block_type="text",
+                text=page.text,
+                page=page.page,
+                order=(page.page or index + 1) * 100000,
+                pdf_page_label=page.pdf_page_label,
+            )
+        )
+        for index, page in enumerate(doc.pages)
+        if page.text.strip()
+    ]
+    per_page_order: dict[int | None, int] = {}
+    formulas: list[ParsedBlock] = []
+    existing_formula_ids = {
+        re.sub(r"\s+", "", block.latex or _formula_latex(block.text))
+        for block in blocks
+        if block.block_type in {"formula", "formula_inline"}
+    }
+    for payload in payloads:
+        page = payload.get("_page")
+        try:
+            page = int(page) if page is not None else None
+        except (TypeError, ValueError):
+            page = None
+        per_page_order[page] = per_page_order.get(page, 0) + 1
+        latex = str(payload["_formula_latex"])
+        formula_id = re.sub(r"\s+", "", latex)
+        if not formula_id or formula_id in existing_formula_ids:
+            continue
+        existing_formula_ids.add(formula_id)
+        formula = _annotate_block(
+            ParsedBlock(
+                block_type="formula",
+                text="$$" + latex + "$$",
+                latex=latex,
+                page=page,
+                order=(page or 0) * 100000 + per_page_order[page],
+                bbox=_formula_bbox(
+                    payload.get("bbox") or payload.get("coordinate") or payload.get("polygon")
+                ),
+            )
+        )
+        formulas.append(formula)
+    blocks.extend(formulas)
+    blocks.sort(key=lambda block: (block.page or 0, block.order))
+    for formula in formulas:
+        for page in doc.pages:
+            if page.page == formula.page:
+                page.text = (page.text + "\n\n" + formula.text).strip()
+                break
+    doc.blocks = blocks
+    logger.info("全文公式识别完成: %s, 新增 %d 条 LaTeX 公式", Path(path).name, len(formulas))
+    return doc
+
+
+_TEXTBOOK_REFERENCE_PATTERNS = (
+    re.compile(r"(?<![A-Za-z0-9])(?:P|p)\s*\d{1,4}(?:\s*(?:例|Ex|T|习题)\s*\d+(?:\s*\([^)]{1,20}\))*)?"),
+    re.compile(r"第\s*\d{1,4}\s*页"),
+    re.compile(r"(?<![\u4e00-\u9fffA-Za-z0-9])(?:例|Ex|T)\s*\d+(?:\s*\([^)]{1,20}\))*", re.I),
+)
+_ANNOTATION_MARKER = re.compile(r"^(?:考点|注意|易错|方法|提示|结论|证明|思路)\s*[:：]", re.I)
+_UI_NOISE = re.compile(
+    r"^(?:\d{1,2}:\d{2}|[2-5]G|[0-9]{1,3}%|仅供参考|如有错误欢迎指正|"
+    r"https?://\S+|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,})$",
+    re.I,
+)
+
+
+def _extract_textbook_references(text: str) -> tuple[str, ...]:
+    """提取“教材内页码/题号”候选，不把它误作 PDF 物理页。"""
+    found: list[str] = []
+    for pattern in _TEXTBOOK_REFERENCE_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            value = re.sub(r"\s+", " ", match.group(0)).strip()
+            if value and value not in found:
+                found.append(value)
+    # P28 Ex2 同时会命中 P28 Ex2 与 Ex2；保留信息更完整的引用即可。
+    return tuple(
+        value
+        for value in found
+        if not any(value != candidate and value in candidate for candidate in found)
+    )
+
+
+def _content_role(block_type: str, text: str) -> str:
+    """保守地标记版面角色；只滤明显噪声，红蓝批注等仍作为可检索证据保留。"""
+    if block_type in {"header", "footer", "page_number", "footnote"}:
+        return "noise"
+    clean = " ".join((text or "").split())
+    if clean and len(clean) <= 100 and _UI_NOISE.fullmatch(clean):
+        return "noise"
+    if _ANNOTATION_MARKER.match(clean):
+        return "annotation"
+    if clean and len(clean) <= 80 and _extract_textbook_references(clean):
+        return "reference"
+    return "content"
+
+
+def _annotate_block(block: ParsedBlock) -> ParsedBlock:
+    block.textbook_references = _extract_textbook_references(block.text)
+    block.content_role = _content_role(block.block_type, block.text)
+    return block
+
+
 def _block_text(block: dict) -> str:
     """content_list 单个 block 的可检索文本（text/table/formula 按类型拼接）。"""
     btype = block.get("type") or ""
-    if btype in ("formula", "formula_inline"):
-        latex = block.get("latex") or ""
+    if btype in ("formula", "formula_inline", "equation", "equation_interline", "inline_equation"):
+        latex = _formula_latex(block)
         return f"$${latex}$$" if latex else ""
     if btype == "table":
         text = block.get("text") or ""
@@ -251,17 +623,69 @@ def _resolve_image_path(img_path: str | None, base_dir: Path | None) -> str:
     return str(p.resolve()) if p.exists() else ""
 
 
+def _persist_parser_assets(
+    document: ParsedDocument, *, work_dir: Path, source_path: str
+) -> None:
+    """在清理外部解析器临时目录前，持久化其中的图片资产。
+
+    MinerU / MarkPDFdown 的 JSON 可能引用临时目录中的裁剪图。若不复制，入库阶段
+    的视觉摘要必然读不到图片。仅复制位于本次 work_dir 下、且确实被 block 引用的文件。
+    """
+    asset_blocks = [b for b in document.blocks if b.image_path]
+    if not asset_blocks:
+        return
+    try:
+        source = Path(source_path)
+        try:
+            stamp = f"{source.resolve()}:{source.stat().st_size}:{source.stat().st_mtime_ns}"
+        except OSError:
+            stamp = str(source.resolve())
+        target_dir = Path(config.storage.parsed_assets_dir).resolve() / hashlib.sha256(
+            stamp.encode("utf-8", errors="replace")
+        ).hexdigest()[:16]
+        target_dir.mkdir(parents=True, exist_ok=True)
+        root = work_dir.resolve()
+        copied: dict[Path, Path] = {}
+        for index, block in enumerate(asset_blocks):
+            original = Path(block.image_path)
+            try:
+                original = original.resolve()
+                original.relative_to(root)
+            except (OSError, ValueError):
+                continue
+            if not original.is_file():
+                continue
+            if original not in copied:
+                destination = target_dir / f"{len(copied):03d}_{original.name}"
+                shutil.copy2(original, destination)
+                copied[original] = destination
+            block.image_path = str(copied[original])
+        if copied:
+            logger.info("已持久化 %d 个解析图片资产: %s", len(copied), target_dir)
+    except OSError as exc:
+        # 图片资产失败不能让文本解析链路失效；后续按 caption 回退。
+        logger.warning("解析图片资产持久化失败: %s", exc)
+
+
 def _blocks_to_pages(blocks: list[ParsedBlock]) -> list[ParsedPage]:
     """按页聚合 block 文本，保证 pages 视图与 blocks 一致。"""
     by_page: dict[int, list[str]] = {}
+    labels: dict[int, str] = {}
     for b in blocks:
         if not b.text:
             continue
-        by_page.setdefault(b.page or 0, []).append(b.text)
+        key = b.page or 0
+        by_page.setdefault(key, []).append(b.text)
+        if b.pdf_page_label and key not in labels:
+            labels[key] = b.pdf_page_label
     pages = []
     for k in sorted(by_page):
         pages.append(
-            ParsedPage(page=None if k == 0 else k, text="\n\n".join(by_page[k]))
+            ParsedPage(
+                page=None if k == 0 else k,
+                text="\n\n".join(by_page[k]),
+                pdf_page_label=labels.get(k, ""),
+            )
         )
     return pages
 
@@ -319,6 +743,11 @@ def _mineru_json_to_document(content: dict, *, base_dir: Path | None = None) -> 
         except (TypeError, ValueError):
             page = None
         btype = str(block.get("type") or "text")
+        if btype in {"equation", "equation_interline", "display_formula"}:
+            btype = "formula"
+        elif btype in {"inline_equation", "inline_formula"}:
+            btype = "formula_inline"
+        page_label = str(block.get("pdf_page_label") or block.get("page_label") or "").strip()
         seq = int(block.get("_seq", 0))
         order = block.get("order") if block.get("order") is not None else seq
 
@@ -328,7 +757,7 @@ def _mineru_json_to_document(content: dict, *, base_dir: Path | None = None) -> 
             html = block.get("html") or ""
             text = (block.get("text") or "").strip() or _html_table_to_text(html)
             blocks.append(
-                ParsedBlock(
+                _annotate_block(ParsedBlock(
                     block_type="table",
                     text=text,
                     page=page,
@@ -336,11 +765,12 @@ def _mineru_json_to_document(content: dict, *, base_dir: Path | None = None) -> 
                     caption=caption_by_target.get(seq, ""),
                     order=order,
                     bbox=_as_bbox(block.get("bbox")),
-                )
+                    pdf_page_label=page_label,
+                ))
             )
         elif btype == "image":
             blocks.append(
-                ParsedBlock(
+                _annotate_block(ParsedBlock(
                     block_type="image",
                     text=(block.get("text") or "").strip(),
                     page=page,
@@ -348,19 +778,21 @@ def _mineru_json_to_document(content: dict, *, base_dir: Path | None = None) -> 
                     caption=caption_by_target.get(seq, ""),
                     order=order,
                     bbox=_as_bbox(block.get("bbox")),
-                )
+                    pdf_page_label=page_label,
+                ))
             )
         elif btype in ("formula", "formula_inline"):
-            latex = block.get("latex") or ""
+            latex = _formula_latex(block)
             blocks.append(
-                ParsedBlock(
+                _annotate_block(ParsedBlock(
                     block_type=btype,
                     text=f"$${latex}$$" if latex else "",
                     page=page,
                     latex=latex,
                     order=order,
                     bbox=_as_bbox(block.get("bbox")),
-                )
+                    pdf_page_label=page_label,
+                ))
             )
         elif btype == "title":
             try:
@@ -368,28 +800,30 @@ def _mineru_json_to_document(content: dict, *, base_dir: Path | None = None) -> 
             except (TypeError, ValueError):
                 level = 1
             blocks.append(
-                ParsedBlock(
+                _annotate_block(ParsedBlock(
                     block_type="title",
                     text=(block.get("text") or "").strip(),
                     page=page,
                     level=level,
                     order=order,
                     bbox=_as_bbox(block.get("bbox")),
-                )
+                    pdf_page_label=page_label,
+                ))
             )
         else:
             blocks.append(
-                ParsedBlock(
+                _annotate_block(ParsedBlock(
                     block_type=btype,
                     text=_block_text(block).strip(),
                     page=page,
                     order=order,
                     bbox=_as_bbox(block.get("bbox")),
-                )
+                    pdf_page_label=page_label,
+                ))
             )
 
     for seq, page, text in orphan_captions:
-        blocks.append(ParsedBlock(block_type="caption", text=text, page=page, order=seq))
+        blocks.append(_annotate_block(ParsedBlock(block_type="caption", text=text, page=page, order=seq)))
 
     blocks.sort(key=lambda b: (b.page or 0, b.order))
     return ParsedDocument(pages=_blocks_to_pages(blocks), blocks=blocks)
@@ -496,6 +930,12 @@ def _parse_pdf_mineru(
     *,
     cmd: str = "mineru",
     timeout: int = 0,
+    backend: str = "hybrid-engine",
+    effort: str = "medium",
+    lang: str = "ch",
+    formula: bool = True,
+    table: bool = True,
+    image_analysis: bool = True,
 ) -> ParsedDocument | None:
     """子进程调用 MinerU CLI，读取输出 Markdown/JSON 重组为 ParsedDocument。
 
@@ -505,22 +945,36 @@ def _parse_pdf_mineru(
         return None
     tmp = Path(tempfile.mkdtemp(prefix="mineru_"))
     try:
+        args = [
+            cmd,
+            "-p", str(path),
+            "-o", str(tmp),
+            "-m", "auto",
+            "-b", backend,
+            "-l", lang,
+            "-f", str(formula).lower(),
+            "-t", str(table).lower(),
+            "--image-analysis", str(image_analysis).lower(),
+        ]
+        # --effort 仅 hybrid backend 支持；其他 backend 保持兼容。
+        if backend in ("hybrid-engine", "hybrid-http-client"):
+            args.extend(["--effort", effort])
         logger.info(
-            "MinerU 解析开始: %s (timeout=%s)", Path(path).name, timeout or "无"
+            "MinerU 解析开始: %s (backend=%s effort=%s timeout=%s)",
+            Path(path).name,
+            backend,
+            effort,
+            timeout or "无",
         )
-        proc = subprocess.run(
-            [cmd, "-p", str(path), "-o", str(tmp)],
-            capture_output=True,
-            text=True,
+        proc, stdout, stderr = _run_capture(
+            args,
             timeout=None if timeout <= 0 else timeout,
-            encoding="utf-8",
-            errors="replace",
         )
         if proc.returncode != 0:
             logger.warning(
                 "MinerU 退出码 %s: %s",
                 proc.returncode,
-                (proc.stderr or proc.stdout).strip()[:300],
+                _command_error_tail(stdout, stderr),
             )
             return None
 
@@ -539,6 +993,7 @@ def _parse_pdf_mineru(
             if isinstance(content, dict) and isinstance(content.get("content_list"), list):
                 doc = _mineru_json_to_document(content, base_dir=jf.parent)
                 if doc.pages:
+                    _persist_parser_assets(doc, work_dir=tmp, source_path=path)
                     logger.info(
                         "MinerU 解析完成: %s, %d 页 / %d 块 (json)",
                         Path(path).name,
@@ -561,20 +1016,233 @@ def _parse_pdf_mineru(
         shutil.rmtree(tmp, ignore_errors=True)
 
 
+def _markpdfdown_available(cmd: str) -> bool:
+    """外部增强解析器命令是否可调用。"""
+    return bool(cmd and shutil.which(cmd))
+
+
+def _markpdfdown_command(
+    cmd: str,
+    args_template: str,
+    *,
+    path: str,
+    output_dir: Path,
+    output_file: Path,
+) -> list[str] | None:
+    """按显式模板构建外部解析器命令，禁止 shell 执行与猜测 CLI 参数。
+
+    {output} 指临时目录，适用于目录型 CLI；{output_file} 指临时 .md 文件，
+    适用于 MarkPDFdown 的 ``--output`` 文件参数。
+    """
+    if "{input}" not in args_template or (
+        "{output}" not in args_template and "{output_file}" not in args_template
+    ):
+        logger.warning(
+            "MARKPDFDOWN_ARGS 必须包含 {input} 与 {output}/{output_file} 占位符，跳过增强解析器"
+        )
+        return None
+    try:
+        # 命令最终以 list 传给 subprocess，不需要保留引号；posix=True 可统一
+        # 去除模板中的引号（Windows 下 shlex 的非 POSIX 模式会把引号当作字符）。
+        tokens = shlex.split(args_template, posix=True)
+    except ValueError as exc:
+        logger.warning("MARKPDFDOWN_ARGS 格式错误，跳过增强解析器: %s", exc)
+        return None
+    if not tokens:
+        logger.warning("MARKPDFDOWN_ARGS 为空，跳过增强解析器")
+        return None
+    replacements = {
+        "{input}": str(Path(path).resolve()),
+        "{output}": str(output_dir),
+        "{output_file}": str(output_file),
+    }
+    return [
+        cmd,
+        *[
+            token.replace("{input}", replacements["{input}"])
+            .replace("{output_file}", replacements["{output_file}"])
+            .replace("{output}", replacements["{output}"])
+            for token in tokens
+        ],
+    ]
+
+
+def _generic_json_to_document(content: object, *, base_dir: Path) -> ParsedDocument | None:
+    """兼容外部解析器常见 JSON 输出；优先复用 MinerU 的 content_list 结构。"""
+    if isinstance(content, dict) and isinstance(content.get("content_list"), list):
+        return _mineru_json_to_document(content, base_dir=base_dir)
+    if isinstance(content, dict):
+        raw_pages = content.get("pages") or (content.get("data") or {}).get("pages")
+    else:
+        raw_pages = None
+    if not isinstance(raw_pages, list):
+        return None
+    pages: list[ParsedPage] = []
+    blocks: list[ParsedBlock] = []
+    for index, item in enumerate(raw_pages, 1):
+        if not isinstance(item, dict):
+            continue
+        page = _page_num(item) or index
+        text = str(item.get("text") or item.get("content") or item.get("markdown") or "").strip()
+        if text:
+            pages.append(ParsedPage(page=page, text=text))
+        for order, block in enumerate(item.get("blocks") or []):
+            if not isinstance(block, dict):
+                continue
+            block_type = str(block.get("type") or "text")
+            if block_type in {"equation", "equation_interline", "display_formula"}:
+                block_type = "formula"
+            elif block_type in {"inline_equation", "inline_formula"}:
+                block_type = "formula_inline"
+            if block_type in {"formula", "formula_inline"}:
+                latex = _formula_latex(block)
+                block_text = f"$${latex}$$" if latex else ""
+            else:
+                block_text = str(block.get("text") or block.get("content") or "").strip()
+            if block_text:
+                blocks.append(
+                    _annotate_block(ParsedBlock(
+                        block_type=block_type,
+                        text=block_text,
+                        page=page,
+                        order=order,
+                        pdf_page_label=str(item.get("page_label") or "").strip(),
+                    ))
+                )
+    if blocks and not pages:
+        pages = _blocks_to_pages(blocks)
+    return ParsedDocument(pages=pages, blocks=blocks) if pages else None
+
+
+def _parse_pdf_markpdfdown(
+    path: str, *, cmd: str, args_template: str, timeout: int
+) -> ParsedDocument | None:
+    """运行可配置的 MarkPDFdown 适配器并读取 Markdown/JSON 输出。
+
+    项目不假设第三方 CLI 的参数名；使用者必须在 MARKPDFDOWN_ARGS 指定
+    带 {input}/{output} 的准确命令模板。任何异常均回退内置解析链。
+    """
+    if not _markpdfdown_available(cmd):
+        logger.warning("MarkPDFdown 命令不可用: %s", cmd or "<未配置>")
+        return None
+    tmp = Path(tempfile.mkdtemp(prefix="markpdfdown_"))
+    try:
+        args = _markpdfdown_command(
+            cmd,
+            args_template,
+            path=path,
+            output_dir=tmp,
+            output_file=tmp / "document.md",
+        )
+        if not args:
+            return None
+        logger.info("MarkPDFdown 增强解析开始: %s", Path(path).name)
+        proc, stdout, stderr = _run_capture(
+            args, timeout=None if timeout <= 0 else timeout
+        )
+        if proc.returncode != 0:
+            logger.warning(
+                "MarkPDFdown 退出码 %s: %s",
+                proc.returncode,
+                _command_error_tail(stdout, stderr),
+            )
+            return None
+        for json_path in sorted(tmp.rglob("*.json")):
+            try:
+                content = json.loads(json_path.read_text(encoding="utf-8", errors="replace"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if doc := _generic_json_to_document(content, base_dir=json_path.parent):
+                _persist_parser_assets(doc, work_dir=tmp, source_path=path)
+                logger.info("MarkPDFdown 解析完成: %s (json)", Path(path).name)
+                return doc
+        markdown_files = [*tmp.rglob("*.md"), *tmp.rglob("*.markdown")]
+        if markdown_files:
+            best = max(markdown_files, key=lambda item: item.stat().st_size)
+            doc = _mineru_md_to_pages(best.read_text(encoding="utf-8", errors="replace"))
+            if doc.pages:
+                logger.info("MarkPDFdown 解析完成: %s (markdown)", Path(path).name)
+                return doc
+        logger.warning("MarkPDFdown 未产出可用 JSON/Markdown: %s", Path(path).name)
+        return None
+    except subprocess.TimeoutExpired:
+        logger.warning("MarkPDFdown 解析超时（%s 秒）: %s", timeout, Path(path).name)
+        return None
+    except Exception as exc:
+        logger.warning("MarkPDFdown 解析异常: %s", exc)
+        return None
+    finally:
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def _parse_pdf(path: str) -> ParsedDocument:
     p = config.parsing
     pdf_kind = _pdf_kind(path)
+    expected_pages = _pdf_page_count(path)
     logger.info("PDF 类型判断: %s -> %s", Path(path).name, pdf_kind)
 
-    if p.pdf_parser in ("mineru", "auto"):
-        want_mineru = p.pdf_parser == "mineru" or pdf_kind in ("scanned", "mixed")
+    best_doc: ParsedDocument | None = None
+    best_quality = _assess_pdf_quality(None, expected_pages=expected_pages)
+
+    def consider(doc: ParsedDocument | None, source: str) -> bool:
+        nonlocal best_doc, best_quality
+        quality = _assess_pdf_quality(doc, expected_pages=expected_pages)
+        _log_pdf_quality(source, quality)
+        if doc is not None:
+            doc.parser_name = source
+            doc.parse_quality = quality.score
+        if doc and doc.full_text.strip() and quality.score > best_quality.score:
+            best_doc, best_quality = doc, quality
+        return bool(doc and doc.full_text.strip() and quality.score >= p.pdf_quality_threshold)
+
+    # 显式指定或 auto + 开关时，先调用可配置的外部增强解析器。
+    want_markpdfdown = p.pdf_parser == "markpdfdown" or (
+        p.pdf_parser == "auto" and p.markpdfdown_enabled
+    )
+    if want_markpdfdown:
+        if consider(
+            _parse_pdf_markpdfdown(
+                path,
+                cmd=p.markpdfdown_cmd,
+                args_template=p.markpdfdown_args,
+                timeout=p.markpdfdown_timeout,
+            ),
+            "markpdfdown",
+        ):
+            return best_doc  # type: ignore[return-value]
+
+    # MarkPDFdown 是增强候选而不是单点依赖；显式选它失败时仍回退 MinerU。
+    if p.pdf_parser in ("mineru", "auto", "markpdfdown"):
+        want_mineru = p.pdf_parser in ("mineru", "markpdfdown") or pdf_kind in ("scanned", "mixed")
         if want_mineru:
             if _mineru_available(p.mineru_cmd):
                 doc = _parse_pdf_mineru(
-                    path, cmd=p.mineru_cmd, timeout=p.mineru_timeout
+                    path,
+                    cmd=p.mineru_cmd,
+                    timeout=p.mineru_timeout,
+                    backend=p.mineru_backend,
+                    effort=p.mineru_effort,
+                    lang=p.mineru_lang,
+                    formula=p.mineru_formula,
+                    table=p.mineru_table,
+                    image_analysis=p.mineru_image_analysis,
                 )
-                if doc and doc.full_text.strip():
-                    return doc
+                if consider(doc, f"mineru:{p.mineru_effort}"):
+                    return best_doc  # type: ignore[return-value]
+                if p.mineru_retry_high and p.mineru_effort != "high":
+                    high_doc = _parse_pdf_mineru(
+                        path,
+                        cmd=p.mineru_cmd,
+                        timeout=p.mineru_timeout,
+                        backend=p.mineru_backend,
+                        effort="high",
+                        lang=p.mineru_lang,
+                        formula=p.mineru_formula,
+                        table=p.mineru_table,
+                        image_analysis=True,
+                    )
+                    if consider(high_doc, "mineru:high"):
+                        return best_doc  # type: ignore[return-value]
             elif p.pdf_parser == "mineru":
                 logger.warning(
                     "PDF_PARSER=mineru 但找不到命令 %s，回退现有链路", p.mineru_cmd
@@ -583,27 +1251,37 @@ def _parse_pdf(path: str) -> ParsedDocument:
     # 原生文本 PDF：直接提取
     try:
         doc = _parse_pdf_pymupdf4llm(path)
-        if doc and doc.full_text.strip():
-            return doc
+        doc = _enrich_document_with_formulas(doc, path)
+        if consider(doc, "pymupdf4llm"):
+            return best_doc  # type: ignore[return-value]
         if p.pdf_use_ocr and not p.pdf_force_ocr:
             logger.info("PDF 空文本，OCR 重试: %s", Path(path).name)
             doc = _parse_pdf_pymupdf4llm(path, force_ocr=True)
-            if doc and doc.full_text.strip():
-                return doc
+            doc = _enrich_document_with_formulas(doc, path)
+            if consider(doc, "pymupdf4llm:ocr"):
+                return best_doc  # type: ignore[return-value]
     except Exception as e:
         logger.warning("pymupdf4llm 失败，回退 fitz: %s", e)
 
     doc = _parse_pdf_fitz(path)
-    if doc.full_text.strip():
-        return doc
+    if consider(doc, "fitz"):
+        return best_doc  # type: ignore[return-value]
 
     if p.pdf_use_ocr and not p.pdf_force_ocr:
         try:
             ocr = _parse_pdf_pymupdf4llm(path, force_ocr=True)
-            if ocr and ocr.full_text.strip():
-                return ocr
+            ocr = _enrich_document_with_formulas(ocr, path)
+            if consider(ocr, "pymupdf4llm:ocr-final"):
+                return best_doc  # type: ignore[return-value]
         except Exception as e:
             logger.warning("PDF OCR 失败: %s", e)
+    if best_doc:
+        logger.warning(
+            "PDF 所有候选均未达到质量阈值 %.2f，保留最佳结果（%.2f）",
+            p.pdf_quality_threshold,
+            best_quality.score,
+        )
+        return best_doc
     return doc
 
 
@@ -1044,9 +1722,14 @@ def parse_file(path: str) -> ParsedDocument:
     if not doc.full_text.strip():
         raise BadRequestException("文件内容为空，无法入库")
 
+    if not doc.parser_name:
+        doc.parser_name = ext.lstrip(".")
+
     logger.info(
-        "解析完成: %s pages=%d chars=%d",
+        "解析完成: %s parser=%s quality=%.2f pages=%d chars=%d",
         Path(path).name,
+        doc.parser_name,
+        doc.parse_quality,
         len(doc.pages),
         len(doc.full_text),
     )

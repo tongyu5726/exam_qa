@@ -6,11 +6,47 @@ import tempfile
 from pathlib import Path
 
 import pytest
+from dotenv import dotenv_values
 
-os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-# 单元测试不触发 MinerU 子进程（避免 CLI 挂起/慢），PDF 走 pymupdf 快速链路
-os.environ.setdefault("PDF_PARSER", "pymupdf")
-os.environ.setdefault("MINERU_TIMEOUT", "10")
+_test_runtime = None
+_session_patch = None
+
+
+def pytest_configure(config):
+    """在收集测试、导入应用前隔离配置、注册表与资料库。"""
+    global _test_runtime, _session_patch
+    from src.services import env_store
+
+    _test_runtime = tempfile.TemporaryDirectory(prefix="exam_test_", ignore_cleanup_errors=True)
+    root = Path(_test_runtime.name)
+    if config.option.basetemp is None:
+        # 避开其他用户/旧进程遗留的 pytest-of-* 目录权限与清理冲突。
+        config.option.basetemp = str(root / "pytest")
+    _session_patch = pytest.MonkeyPatch()
+    defaults = dotenv_values(env_store.ENV_EXAMPLE_PATH)
+    integration = "integration" in config.getoption("markexpr") and "not integration" not in config.getoption("markexpr")
+    for key, value in defaults.items():
+        # 集成测试凭据由调用者显式传入环境变量；从不读取开发者的 .env。
+        if value is not None and not (integration and key in os.environ):
+            _session_patch.setenv(key, value)
+    for key, relative in {
+        "CHROMA_PATH": "storage/chroma", "SQLITE_PATH": "storage/meta.db",
+        "LOG_PATH": "storage/app.log", "KNOWLEDGE_DIR": "data/knowledge",
+        "PARSED_ASSETS_DIR": "storage/parsed_assets",
+    }.items():
+        _session_patch.setenv(key, str(root / relative))
+    _session_patch.setenv("PDF_PARSER", "pymupdf")
+    _session_patch.setenv("MINERU_TIMEOUT", "10")
+    _session_patch.setattr(env_store, "PROJECT_ROOT", root)
+    _session_patch.setattr(env_store, "ENV_PATH", root / ".env")
+    # ensure_env_file 和设置页写入只会落在临时目录。
+
+
+def pytest_unconfigure(config):
+    if _session_patch is not None:
+        _session_patch.undo()
+    if _test_runtime is not None:
+        _test_runtime.cleanup()
 
 
 @pytest.fixture
@@ -75,44 +111,3 @@ def _clear_retrieval_caches():
     clear_query_embed_cache()
     invalidate_bm25_cache()
     yield
-
-
-# ── 测试结束后自动清理测试残留 ──────────────────────────────────
-
-_SAMPLE_FILES = (
-    "laplace-transform.txt",
-    "eigenvalues.docx",
-    "bayes-theorem.pptx",
-    "ode-first-order.pdf",
-    "determinants.doc",
-)
-
-
-def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
-def _cleanup_test_artifacts() -> None:
-    """删除测试产生的残留：样本文件、占位笔记、pytest 临时目录。
-
-    只清理已知的测试产物，不触碰用户真实资料。
-    """
-    root = _project_root()
-
-    knowledge = root / "data" / "knowledge"
-    if knowledge.is_dir():
-        for name in _SAMPLE_FILES:
-            (knowledge / name).unlink(missing_ok=True)
-        for note in knowledge.glob("note_*.md"):
-            try:
-                if note.read_text(encoding="utf-8").strip() == "# hello":
-                    note.unlink(missing_ok=True)
-            except (OSError, UnicodeDecodeError):
-                continue
-
-    shutil.rmtree(root / ".pytest-tmp", ignore_errors=True)
-
-
-def pytest_sessionfinish(session, exitstatus):
-    """pytest 会话结束时自动清理测试残留（不影响真实资料）。"""
-    _cleanup_test_artifacts()

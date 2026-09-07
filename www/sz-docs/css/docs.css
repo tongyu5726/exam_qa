@@ -251,6 +251,7 @@
 
 .sz-upload-btn,
 .sz-docs-upload button,
+.sz-doc-open,
 .sz-doc-del {
   font-family: var(--sz-font-ui);
   font-size: 0.85rem;
@@ -401,6 +402,25 @@
   box-shadow: 0 10px 24px color-mix(in srgb, var(--sz-accent) 8%, transparent);
 }
 
+.sz-doc-card-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sz-doc-open {
+  margin-top: 0.15rem;
+  color: var(--sz-accent);
+  text-decoration: none;
+  border-color: color-mix(in srgb, var(--sz-accent) 35%, var(--sz-border));
+  background: color-mix(in srgb, var(--sz-accent) 7%, var(--sz-bg-surface));
+}
+
+.sz-doc-open:hover {
+  filter: brightness(1.05);
+}
+
 .sz-doc-meta {
   flex: 1;
   min-width: 0;
@@ -456,7 +476,6 @@
 }
 
 .sz-doc-del {
-  flex: 0 0 auto;
   margin-top: 0.15rem;
   color: var(--sz-danger);
   border-color: transparent;

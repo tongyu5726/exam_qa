@@ -33,23 +33,32 @@ _MD_HEADER = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
 _TEXT_LIKE_BLOCKS = frozenset(
     {
         "text",
-        "formula",
-        "formula_inline",
         "caption",
         "image_caption",
         "table_caption",
         "figure_caption",
     }
 )
+_FORMULA_BLOCKS = frozenset({"formula", "formula_inline"})
 _MARGIN_BLOCKS = frozenset({"header", "footer"})
 
+_CJK_TEXT = re.compile(r"[\u4e00-\u9fff]")
+_FORMULA_CONTEXT_CUE = re.compile(
+    r"公式|表达式|关系式|方程|恒等式|可表示为|可写为|可得|推导|其中|满足|定义为"
+)
+_NUMBERED_SECTION = re.compile(r"^(?:#{1,6}\s*)?((?:\d+\.)+\d+\s+[^\n]{1,80})$", re.MULTILINE)
 
+
+_LATEX_ENV = re.compile(r"\\begin\{(?:equation\*?|align\*?|aligned|cases|matrix)\}.*?\\end\{(?:equation\*?|align\*?|aligned|cases|matrix)\}", re.DOTALL)
+_LATEX_BRACKET = re.compile(r"\\\[(.+?)\\\]", re.DOTALL)
+_LATEX_PAREN = re.compile(r"\\\((.+?)\\\)", re.DOTALL)
 _LATEX_BLOCK = re.compile(r"\$\$(.+?)\$\$", re.DOTALL)
 _LATEX_INLINE = re.compile(r"\$([^$]+?)\$")
+_LATEX_PLACEHOLDER = re.compile(r"__LATEX_\d+__")
 
 
 def _protect_latex(text: str) -> tuple[str, dict[str, str]]:
-    """用占位符替换 $$...$$ 和 $...$，防止分块时切断公式。"""
+    """保护常见 LaTeX 分隔符与环境，避免按句分块时切断公式。"""
     placeholders: dict[str, str] = {}
     counter = [0]
 
@@ -59,8 +68,8 @@ def _protect_latex(text: str) -> tuple[str, dict[str, str]]:
         counter[0] += 1
         return key
 
-    text = _LATEX_BLOCK.sub(_replace_block, text)
-    text = _LATEX_INLINE.sub(_replace_block, text)
+    for pattern in (_LATEX_ENV, _LATEX_BRACKET, _LATEX_PAREN, _LATEX_BLOCK, _LATEX_INLINE):
+        text = pattern.sub(_replace_block, text)
     return text, placeholders
 
 
@@ -72,6 +81,52 @@ def _restore_latex(chunks: list[str], placeholders: dict[str, str]) -> list[str]
             chunk = chunk.replace(key, latex)
         result.append(chunk)
     return result
+
+
+def _split_long_protected(text: str, chunk_size: int) -> list[str]:
+    """按长度切长句，但把单个 LaTeX 占位符视为不可分割单元。"""
+    if not _LATEX_PLACEHOLDER.search(text):
+        return [text[i : i + chunk_size] for i in range(0, len(text), chunk_size)]
+    out: list[str] = []
+    current = ""
+    pos = 0
+    for match in _LATEX_PLACEHOLDER.finditer(text):
+        for unit, protected in ((text[pos:match.start()], False), (match.group(0), True)):
+            while unit:
+                if protected:
+                    if current and len(current) + len(unit) > chunk_size:
+                        out.append(current)
+                        current = ""
+                    current += unit
+                    unit = ""
+                    continue
+                room = chunk_size - len(current)
+                if room <= 0:
+                    out.append(current)
+                    current = ""
+                    room = chunk_size
+                take = unit[:room]
+                current += take
+                unit = unit[room:]
+                if len(current) >= chunk_size:
+                    out.append(current)
+                    current = ""
+        pos = match.end()
+    tail = text[pos:]
+    while tail:
+        room = chunk_size - len(current)
+        if room <= 0:
+            out.append(current)
+            current = ""
+            room = chunk_size
+        current += tail[:room]
+        tail = tail[room:]
+        if len(current) >= chunk_size:
+            out.append(current)
+            current = ""
+    if current:
+        out.append(current)
+    return [item for item in out if item]
 
 
 def _split_text(
@@ -107,8 +162,7 @@ def _split_text(
                     if current.strip():
                         chunks.append(current.strip())
                     if len(sent) > chunk_size:
-                        for i in range(0, len(sent), chunk_size - chunk_overlap):
-                            piece = sent[i : i + chunk_size]
+                        for piece in _split_long_protected(sent, chunk_size):
                             if piece.strip():
                                 chunks.append(piece.strip())
                         current = ""
@@ -147,6 +201,90 @@ def _section_label(section_path: str) -> str:
     return section_path.split(" / ")[-1] if section_path else ""
 
 
+def _bbox_metadata(bboxes: list[tuple | None]) -> str:
+    """将同页结构块坐标合并为可存入 Chroma 的稳定字符串。"""
+    values: list[tuple[float, float, float, float]] = []
+    for bbox in bboxes:
+        if not isinstance(bbox, tuple) or len(bbox) != 4:
+            continue
+        try:
+            x0, top, x1, bottom = (float(value) for value in bbox)
+        except (TypeError, ValueError):
+            continue
+        values.append((x0, top, x1, bottom))
+    if not values:
+        return ""
+    return ",".join(
+        f"{value:.2f}"
+        for value in (
+            min(item[0] for item in values),
+            min(item[1] for item in values),
+            max(item[2] for item in values),
+            max(item[3] for item in values),
+        )
+    )
+
+
+def _join_references(values: list[str] | tuple[str, ...]) -> str:
+    """Chroma metadata 只存标量，教材页码/题号候选用稳定分隔字符串保存。"""
+    unique: list[str] = []
+    for value in values:
+        clean = str(value or "").strip()
+        if clean and clean not in unique:
+            unique.append(clean)
+    return "; ".join(unique)
+
+
+def _formula_context_excerpt(blocks: list, index: int, max_chars: int = 420) -> str:
+    """从公式同页结构块中提取章节线索和邻近中文正文，供检索公式语义。"""
+    formula = blocks[index]
+    candidates: list[tuple[int, int, str]] = []
+    for other_index, other in enumerate(blocks):
+        if other_index == index or other.page != formula.page:
+            continue
+        if other.block_type in _FORMULA_BLOCKS or other.block_type in _MARGIN_BLOCKS:
+            continue
+        if other.content_role == "noise":
+            continue
+        text = re.sub(r"[ \t]+", " ", str(other.text or ""))
+        text = re.sub(r"\n{3,}", "\n\n", text).strip()
+        if not text or not _CJK_TEXT.search(text):
+            continue
+        cue_rank = 0 if _FORMULA_CONTEXT_CUE.search(text) else 1
+        candidates.append((cue_rank, abs(other_index - index), text))
+
+    selected: list[str] = []
+    used = 0
+    for _, _, text in sorted(candidates, key=lambda item: (item[0], item[1])):
+        pieces = [
+            piece.strip()
+            for piece in re.split(r"(?<=[。！？；：])|\n+", text)
+            if piece.strip() and _CJK_TEXT.search(piece)
+        ]
+        focused = [
+            piece
+            for piece in pieces
+            if _FORMULA_CONTEXT_CUE.search(piece) or _NUMBERED_SECTION.match(piece)
+        ]
+        if not focused:
+            focused = pieces[-2:]
+        for piece in focused:
+            if piece in selected:
+                continue
+            remaining = max_chars - used
+            if remaining <= 0:
+                return "\n".join(selected)
+            selected.append(piece[:remaining])
+            used += len(selected[-1]) + 1
+    return "\n".join(selected)
+
+
+def _formula_section_hint(context: str) -> str:
+    """结构化标题缺失时，从邻近正文中的编号标题补出章节 metadata。"""
+    matches = _NUMBERED_SECTION.findall(context)
+    return matches[-1].strip() if matches else ""
+
+
 def _chunk_structured(
     parsed,
     *,
@@ -177,6 +315,9 @@ def _chunk_structured(
             "block_type": "text",
             "table_headers": "",
             "section_path": _section_path(),
+            "bboxes": [],
+            "pdf_page_label": "",
+            "textbook_references": [],
         }
 
     def _flush() -> None:
@@ -188,6 +329,9 @@ def _chunk_structured(
         block_type = group["block_type"]
         table_headers = group["table_headers"]
         section_path = group["section_path"]
+        bbox = _bbox_metadata(group["bboxes"])
+        pdf_page_label = group["pdf_page_label"]
+        textbook_references = _join_references(group["textbook_references"])
         group = None
         if not body:
             return
@@ -206,12 +350,25 @@ def _chunk_structured(
                     "section_path": section_path,
                     "table_headers": table_headers,
                     "context": context.strip(),
+                    "bbox": bbox,
+                    "pdf_page_label": pdf_page_label,
+                    "textbook_references": textbook_references,
+                    "content_role": "content",
                 }
             )
 
-    def _standalone(block, text: str, block_type: str, headers: str = "") -> None:
-        section_path = _section_path()
+    def _standalone(
+        block,
+        text: str,
+        block_type: str,
+        headers: str = "",
+        *,
+        extra_context: str = "",
+        section_hint: str = "",
+    ) -> None:
+        section_path = _section_path() or section_hint
         prefix = _section_label(section_path)
+        context = "\n".join(part for part in (prefix, extra_context) if part).strip()
         out.append(
             {
                 "text": text,
@@ -220,15 +377,27 @@ def _chunk_structured(
                 "block_type": block_type,
                 "section_path": section_path,
                 "table_headers": headers,
-                "context": prefix,
+                "context": context,
+                "bbox": _bbox_metadata([block.bbox]),
+                "pdf_page_label": block.pdf_page_label,
+                "textbook_references": _join_references(block.textbook_references),
+                "content_role": block.content_role,
             }
         )
 
-    for block in parsed.blocks:
+    blocks = list(parsed.blocks)
+    for block_index, block in enumerate(blocks):
         btype = block.block_type
-        if btype in _MARGIN_BLOCKS:
-            # 页眉页脚保留在结构里，但不进检索正文（避免污染切片）
-            logger.info("跳过页眉页脚 block: %s 第%s页", btype, block.page or "?")
+        if btype in _MARGIN_BLOCKS or block.content_role == "noise":
+            # 页眉页脚和移动端状态栏、页脚声明等保留在结构中，但不污染检索正文。
+            logger.info("跳过噪声 block: %s 第%s页", btype, block.page or "?")
+            continue
+
+        if block.content_role in {"annotation", "reference"}:
+            _flush()
+            text = block.text.strip()
+            if text:
+                _standalone(block, text, block.content_role)
             continue
 
         if btype == "title":
@@ -240,6 +409,9 @@ def _chunk_structured(
             section_stack.append(title)
             group = _new_group(block.page)
             group["parts"].append(title)
+            group["bboxes"].append(block.bbox)
+            group["pdf_page_label"] = block.pdf_page_label
+            group["textbook_references"].extend(block.textbook_references)
             continue
 
         if btype == "table":
@@ -266,7 +438,32 @@ def _chunk_structured(
                 )
             continue
 
-        # 文本类：段落/公式/独立说明，合并进当前文本组
+        if btype in _FORMULA_BLOCKS:
+            # 公式必须作为独立证据保存，不能再并入 block_type=text 的正文组。
+            _flush()
+            formula_text = block.text.strip()
+            if not formula_text and block.latex:
+                formula_text = f"$${block.latex.strip()}$$"
+            if formula_text:
+                nearby = _formula_context_excerpt(blocks, block_index)
+                section_hint = _formula_section_hint(nearby)
+                prefix = _section_label(_section_path() or section_hint)
+                parts = []
+                if prefix:
+                    parts.append(f"§ {prefix}")
+                if nearby:
+                    parts.append(f"公式上下文：{nearby}")
+                parts.append(f"公式：{formula_text}")
+                _standalone(
+                    block,
+                    "\n".join(parts),
+                    "formula",
+                    extra_context=nearby,
+                    section_hint=section_hint,
+                )
+            continue
+
+        # 文本类：段落/独立说明合并进当前文本组；公式由上面的独立分支处理。
         if btype in _TEXT_LIKE_BLOCKS or btype.startswith("text"):
             if group is None:
                 group = _new_group(block.page)
@@ -275,13 +472,24 @@ def _chunk_structured(
                 group = _new_group(block.page)
             if block.text and block.text.strip():
                 group["parts"].append(block.text.strip())
+                group["bboxes"].append(block.bbox)
+                if not group["pdf_page_label"]:
+                    group["pdf_page_label"] = block.pdf_page_label
+                group["textbook_references"].extend(block.textbook_references)
             continue
 
         # 未知类型 block：按文本兜底，避免丢失内容
         if group is None:
             group = _new_group(block.page)
+        elif group["page"] != block.page:
+            _flush()
+            group = _new_group(block.page)
         if block.text and block.text.strip():
             group["parts"].append(block.text.strip())
+            group["bboxes"].append(block.bbox)
+            if not group["pdf_page_label"]:
+                group["pdf_page_label"] = block.pdf_page_label
+            group["textbook_references"].extend(block.textbook_references)
 
     _flush()
     return out
@@ -546,6 +754,10 @@ def ingest_file(
             section_paths = [c["section_path"] for c in structured]
             table_headers = [c["table_headers"] for c in structured]
             contexts = [c["context"] for c in structured]
+            bboxes = [c["bbox"] for c in structured]
+            pdf_page_labels = [c["pdf_page_label"] for c in structured]
+            textbook_references = [c["textbook_references"] for c in structured]
+            content_roles = [c["content_role"] for c in structured]
         else:
             # 非结构化文档：保持原有按页分块 + 章节推断
             raw_chunks = _chunk_document(
@@ -563,6 +775,10 @@ def ingest_file(
             section_paths = [""] * len(chunk_texts)
             table_headers = [""] * len(chunk_texts)
             contexts = [""] * len(chunk_texts)
+            bboxes = [""] * len(chunk_texts)
+            pdf_page_labels = [""] * len(chunk_texts)
+            textbook_references = [""] * len(chunk_texts)
+            content_roles = ["content"] * len(chunk_texts)
 
         if not chunk_texts:
             raise BadRequestException("分块结果为空")
@@ -586,6 +802,12 @@ def ingest_file(
                 "section_path": section_paths[i] if i < len(section_paths) else "",
                 "table_headers": table_headers[i] if i < len(table_headers) else "",
                 "context": contexts[i] if i < len(contexts) else "",
+                "bbox": bboxes[i] if i < len(bboxes) else "",
+                "pdf_page_label": pdf_page_labels[i] if i < len(pdf_page_labels) else "",
+                "textbook_references": textbook_references[i] if i < len(textbook_references) else "",
+                "content_role": content_roles[i] if i < len(content_roles) else "content",
+                "parser_name": parsed.parser_name,
+                "parse_quality": parsed.parse_quality,
                 "is_active": is_active,
                 **evidence,
             })

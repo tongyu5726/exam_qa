@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from datetime import date
 
@@ -16,6 +17,11 @@ from src.services.storage.question_bank_store import QuestionBankStore
 from src.services.storage.vector_store import ChromaVectorStore
 
 _JSON_FENCE = re.compile(r"^```(?:json)?\s*|\s*```$", re.I)
+logger = logging.getLogger(__name__)
+# 深度推理模型会把推理 token 计入 max_tokens。题库同时需要结构化题目正文，
+# 因而不能沿用普通问答的 2048 默认上限。
+_QUESTION_MIN_MAX_TOKENS = 4096
+_QUESTION_MAX_MAX_TOKENS = 8192
 
 _QUESTION_SYSTEM = """你是严谨的课程命题助教。只能依据给定课程资料出题，不能使用资料外知识。
 输出必须是 JSON 数组；每项只能有 stem、options、answer、analysis 字段。不要输出 Markdown 或其他文字。
@@ -28,6 +34,7 @@ def _citations(hits: list[dict], scenario: str | None, as_of: str | None) -> lis
     for hit in hits:
         meta = hit.get("metadata") or {}
         citation = {
+            "doc_id": str(meta.get("doc_id") or ""),
             "source_file": meta.get("source_file", "未知"),
             "page": meta.get("page"),
             "snippet": (hit.get("text") or "")[:200].replace("\n", " "),
@@ -56,14 +63,33 @@ def _context(hits: list[dict]) -> str:
     return "\n\n".join(parts)
 
 
-def _parse_questions(raw: str, *, question_type: str, count: int) -> list[dict]:
+def _extract_question_list(raw: str) -> list:
+    """兼容模型的 JSON 围栏、前后说明，以及 {"questions": [...]} 包装。
+
+    只接受 JSON 解码得到的题目数组，不尝试修补题目内容，后续仍严格校验
+    题型、选项数、答案与请求题数，避免宽松解析绕过受证据出题约束。
+    """
     text = _JSON_FENCE.sub("", (raw or "").strip()).strip()
-    try:
-        data = json.loads(text)
-    except json.JSONDecodeError as exc:
-        raise BadRequestException("出题模型未返回有效 JSON，请重试") from exc
-    if not isinstance(data, list):
-        raise BadRequestException("出题模型返回格式错误，请重试")
+    decoder = json.JSONDecoder()
+    starts = [0, *[
+        index for index, char in enumerate(text)
+        if index and char in "[{"
+    ]]
+    for start in starts:
+        try:
+            value, _end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, list):
+            return value
+        if isinstance(value, dict) and isinstance(value.get("questions"), list):
+            return value["questions"]
+    logger.warning("出题模型响应未包含可解析的题目 JSON（长度=%d）", len(text))
+    raise BadRequestException("出题模型未返回有效 JSON，请重试")
+
+
+def _parse_questions(raw: str, *, question_type: str, count: int) -> list[dict]:
+    data = _extract_question_list(raw)
     items: list[dict] = []
     for item in data[:count]:
         if not isinstance(item, dict):
@@ -87,6 +113,11 @@ def _parse_questions(raw: str, *, question_type: str, count: int) -> list[dict]:
     if len(items) != count:
         raise BadRequestException("出题结果不符合题型或题数约束，请重试")
     return items
+
+
+def _question_max_tokens(count: int) -> int:
+    """按题数为出题分配推理与最终 JSON 的共享输出预算。"""
+    return min(_QUESTION_MAX_MAX_TOKENS, max(_QUESTION_MIN_MAX_TOKENS, count * 700))
 
 
 def generate_questions(
@@ -114,7 +145,14 @@ def generate_questions(
         f"题数：{request.count}\n章节：{request.chapter or '未指定'}\n\n课程资料：\n{_context(hits)}"
     )
     generated = _parse_questions(
-        llm.chat([{"role": "system", "content": _QUESTION_SYSTEM}, {"role": "user", "content": user}], temperature=0.2),
+        llm.chat(
+            [
+                {"role": "system", "content": _QUESTION_SYSTEM},
+                {"role": "user", "content": user},
+            ],
+            temperature=0.2,
+            max_tokens=_question_max_tokens(request.count),
+        ),
         question_type=request.question_type, count=request.count,
     )
     questions = [

@@ -6,17 +6,22 @@ import logging
 import math
 from typing import Any
 
+from src.config import config
+from src.services.inference_device import load_torch_model, run_torch_inference
+
 logger = logging.getLogger(__name__)
 
 _model: Any = None
 _model_name: str | None = None
+_model_device: str | None = None
 
 
 def clear_reranker() -> None:
     """配置变更后丢弃已加载模型。"""
-    global _model, _model_name
+    global _model, _model_name, _model_device
     _model = None
     _model_name = None
+    _model_device = None
 
 
 def sigmoid(x: float) -> float:
@@ -28,14 +33,16 @@ def sigmoid(x: float) -> float:
 
 
 def _load(model_name: str):
-    global _model, _model_name
-    if _model is not None and _model_name == model_name:
+    global _model, _model_name, _model_device
+    device = config.retrieval.rerank_device
+    if _model is not None and _model_name == model_name and _model_device == device:
         return _model
     from sentence_transformers import CrossEncoder
 
     logger.info("加载精排模型: %s", model_name)
-    _model = CrossEncoder(model_name)
+    _model = load_torch_model(CrossEncoder, model_name, device)
     _model_name = model_name
+    _model_device = device
     return _model
 
 
@@ -62,7 +69,7 @@ def rerank(
         raw_scores = list(score_fn(q, texts))
     else:
         model = _load(model_name)
-        pred = model.predict([[q, t] for t in texts])
+        pred = run_torch_inference(model, lambda: model.predict([[q, t] for t in texts]))
         raw_scores = pred.tolist() if hasattr(pred, "tolist") else list(pred)
 
     if len(raw_scores) != len(hits):

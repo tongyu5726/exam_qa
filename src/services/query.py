@@ -20,6 +20,10 @@ SUPPORTED_MODES = frozenset({"auto", "qa", "concept", "chapter"})
 CONCEPT_TOP_K = 12
 CHAPTER_MAX_CHUNKS = 24
 _REFUSAL = "资料库中未找到相关内容"
+_QUESTION_BANK_ROUTE = (
+    "已识别为出题请求。请进入“我的题库”设置题型、数量、难度和章节；"
+    "题库 Agent 会先检索当前课程资料，再生成并保存题目。"
+)
 
 
 def _validate(mode: str, course_id: str) -> None:
@@ -57,6 +61,7 @@ def _citations(
 ) -> list[Citation]:
     return [
         Citation(
+            doc_id=str(c.get("doc_id") or ""),
             source_file=c["source_file"],
             page=c.get("page"),
             snippet=c["snippet"],
@@ -68,6 +73,15 @@ def _citations(
             authority_label=c.get("authority_label", "教学材料"),
             applicability_scope=c.get("applicability_scope", "all"),
             selection_reason=evidence_reason(c, scenario=scenario, as_of=as_of),
+            chapter=c.get("chapter", ""),
+            section_path=c.get("section_path", ""),
+            block_type=c.get("block_type", ""),
+            bbox=c.get("bbox", ""),
+            pdf_page_label=c.get("pdf_page_label", ""),
+            textbook_references=c.get("textbook_references", ""),
+            content_role=c.get("content_role", "content"),
+            parser_name=c.get("parser_name", ""),
+            parse_quality=float(c.get("parse_quality") or 0.0),
         )
         for c in raw
     ]
@@ -129,6 +143,18 @@ def ask(
     _validate_as_of(as_of)
     logger.info("查询: course=%s intent=%s layer=%s mode=%s scenario=%s as_of=%s conv=%s q='%s...'", course_id, intent.task, intent.layer, mode, scenario or "all", as_of or "latest", conversation_id, question[:60])
 
+    if intent.task == "question_generate":
+        _save_turn(
+            conversation_store, conversation_id, course_id, question,
+            _QUESTION_BANK_ROUTE, [], False, mode, intent=intent.to_dict(),
+        )
+        return AnswerData(
+            answer=_QUESTION_BANK_ROUTE,
+            citations=[],
+            grounded=False,
+            intent=_intent_data(intent),
+        )
+
     hits = _retrieve(question, mode, vs, course_id, scenario=scenario, as_of=as_of)
     if not hits:
         logger.info("拒答 threshold=%.4f", config.retrieval.score_threshold)
@@ -172,6 +198,22 @@ def ask_stream(
     mode, scenario, as_of = intent.mode, intent.scenario, intent.as_of
     _validate_as_of(as_of)
     logger.info("流式查询: course=%s intent=%s layer=%s mode=%s scenario=%s as_of=%s conv=%s q='%s...'", course_id, intent.task, intent.layer, mode, scenario or "all", as_of or "latest", conversation_id, question[:60])
+    if intent.task == "question_generate":
+        yield {"type": "phase", "phase": "routing", "intent": intent.to_dict()}
+        _save_turn(
+            conversation_store, conversation_id, course_id, question,
+            _QUESTION_BANK_ROUTE, [], False, mode, intent=intent.to_dict(),
+        )
+        yield {
+            "type": "done",
+            "data": AnswerData(
+                answer=_QUESTION_BANK_ROUTE,
+                citations=[],
+                grounded=False,
+                intent=_intent_data(intent),
+            ).model_dump(),
+        }
+        return
     yield {"type": "phase", "phase": "retrieving", "intent": intent.to_dict()}
 
     hits = _retrieve(question, mode, vs, course_id, scenario=scenario, as_of=as_of)
@@ -189,7 +231,7 @@ def ask_stream(
 
     yield {"type": "phase", "phase": "generating"}
     for event in stream_generate(context=hits, question=question, llm=llm, mode=mode, history=history):
-        if event["type"] == "delta":
+        if event["type"] in {"phase", "delta"}:
             yield event
         elif event["type"] == "done":
             data = event["data"]

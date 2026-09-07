@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 
 class Citation(BaseModel):
+    doc_id: str = ""
     source_file: str
     page: Optional[int] = None
     snippet: str
@@ -16,6 +17,15 @@ class Citation(BaseModel):
     authority_label: str = "教学材料"
     applicability_scope: str = "all"
     selection_reason: str = ""
+    chapter: str = ""
+    section_path: str = ""
+    block_type: str = ""
+    bbox: str = ""
+    pdf_page_label: str = ""
+    textbook_references: str = ""
+    content_role: str = "content"
+    parser_name: str = ""
+    parse_quality: float = 0.0
 
 
 class IntentData(BaseModel):
@@ -214,9 +224,24 @@ class ParsingPatch(BaseModel):
     pdf_use_ocr: bool | None = None
     pdf_force_ocr: bool | None = None
     pdf_ocr_language: str | None = None
-    pdf_parser: Literal["auto", "pymupdf", "mineru"] | None = None
+    pdf_parser: Literal["auto", "pymupdf", "mineru", "markpdfdown"] | None = None
     mineru_cmd: str | None = None
     mineru_timeout: int | None = Field(default=None, ge=0)
+    mineru_backend: str | None = None
+    mineru_effort: Literal["medium", "high"] | None = None
+    mineru_lang: str | None = None
+    mineru_formula: bool | None = None
+    mineru_table: bool | None = None
+    mineru_image_analysis: bool | None = None
+    mineru_retry_high: bool | None = None
+    pdf_quality_threshold: float | None = Field(default=None, ge=0, le=1)
+    formula_recognition_enabled: bool | None = None
+    formula_recognition_device: str | None = None
+    formula_recognition_model: str | None = None
+    markpdfdown_enabled: bool | None = None
+    markpdfdown_cmd: str | None = None
+    markpdfdown_args: str | None = None
+    markpdfdown_timeout: int | None = Field(default=None, ge=0)
     visual_model: str | None = None
     visual_base_url: str | None = None
     visual_api_key: str | None = None

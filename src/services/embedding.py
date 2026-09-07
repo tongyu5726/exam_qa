@@ -8,6 +8,7 @@ from functools import lru_cache
 from typing import Any, Protocol, runtime_checkable
 
 from src.config import EmbeddingConfig, LLMConfig, config
+from src.services.inference_device import load_torch_model, run_torch_inference
 
 logger = logging.getLogger(__name__)
 
@@ -291,8 +292,9 @@ class EmbeddingClient(Protocol):
 class LocalEmbeddingClient:
     provider = "local"
 
-    def __init__(self, model_name: str):
+    def __init__(self, model_name: str, device: str = "auto"):
         self.model = model_name
+        self.device = device
         self._model = None
 
     def _load(self, *, gen: int | None = None):
@@ -321,7 +323,7 @@ class LocalEmbeddingClient:
 
         def _fit() -> None:
             reset_hf_http_session()
-            self._model = SentenceTransformer(self.model)
+            self._model = load_torch_model(SentenceTransformer, self.model, self.device)
 
         try:
             _fit()
@@ -357,7 +359,10 @@ class LocalEmbeddingClient:
         if not texts:
             return []
         self._load()
-        vectors = self._model.encode(texts, show_progress_bar=False, normalize_embeddings=True)
+        vectors = run_torch_inference(
+            self._model,
+            lambda: self._model.encode(texts, show_progress_bar=False, normalize_embeddings=True),
+        )
         return [v.tolist() for v in vectors]
 
     def status(self) -> str:
@@ -430,7 +435,7 @@ def create_embedding_client(
             timeout=emb_cfg.timeout,
         )
     if provider == "local":
-        return LocalEmbeddingClient(model_name=emb_cfg.model)
+        return LocalEmbeddingClient(model_name=emb_cfg.model, device=emb_cfg.device)
     raise ValueError(f"未知 EMBEDDING_PROVIDER: {emb_cfg.provider!r}，可选 local / openai")
 
 

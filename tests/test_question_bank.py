@@ -14,7 +14,7 @@ from src.dependencies import (
 from src.exceptions import BadRequestException
 from src.main import app
 from src.models import PaperAssembleRequest, QuestionGenerateRequest
-from src.services.question_bank import assemble_paper, generate_questions
+from src.services.question_bank import _parse_questions, assemble_paper, generate_questions
 from src.services.storage.question_bank_store import QuestionBankStore
 
 client = TestClient(app)
@@ -65,6 +65,16 @@ class TestQuestionBankStore:
 
 
 class TestQuestionGeneration:
+    def test_accepts_fenced_json_with_explanation(self):
+        raw = "已依据资料生成：\n```json\n[{\"stem\":\"采样频率最低要求？\",\"options\":[],\"answer\":\"不低于最高频率两倍\",\"analysis\":\"依据采样定理\"}]\n```\n请查收。"
+        questions = _parse_questions(raw, question_type="short_answer", count=1)
+        assert questions[0]["answer"] == "不低于最高频率两倍"
+
+    def test_accepts_questions_object_wrapper(self):
+        raw = '{"questions":[{"stem":"采样频率最低要求？","options":[],"answer":"不低于最高频率两倍","analysis":"依据采样定理"}]}'
+        questions = _parse_questions(raw, question_type="short_answer", count=1)
+        assert len(questions) == 1
+
     def test_generates_only_from_retrieved_evidence(self, temp_dir):
         store = QuestionBankStore(str(temp_dir / "bank.db"))
         request = QuestionGenerateRequest(
@@ -81,6 +91,13 @@ class TestQuestionGeneration:
         assert result["questions"][0]["scenario"] == "考试"
         assert retrieve.call_args.kwargs["course_id"] == "course-default"
         assert retrieve.call_args.kwargs["scenario"] == "考试"
+        assert llm.chat.call_args.kwargs["max_tokens"] == 4096
+
+    def test_scales_output_budget_for_many_questions(self):
+        from src.services.question_bank import _question_max_tokens
+
+        assert _question_max_tokens(1) == 4096
+        assert _question_max_tokens(10) == 7000
 
     def test_does_not_save_when_evidence_is_empty(self, temp_dir):
         store = QuestionBankStore(str(temp_dir / "bank.db"))

@@ -162,5 +162,10 @@ function bindForms() {
 
 await initShell({ active: "bank" });
 bindForms();
+const routedTopic = new URLSearchParams(window.location.search).get("topic");
+if (routedTopic) {
+  const topicInput = document.getElementById("bank-topic");
+  if (topicInput) topicInput.value = routedTopic;
+}
 document.getElementById("sz-course")?.addEventListener("change", loadAll);
 await loadAll();

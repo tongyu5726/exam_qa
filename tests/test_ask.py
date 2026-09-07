@@ -13,7 +13,8 @@ from fastapi.testclient import TestClient
 from src.dependencies import get_llm_client
 from src.main import app
 from src.services import generation
-from src.services.query import CONCEPT_TOP_K, ask, ask_stream
+from src.exceptions import LLMAPIException
+from src.services.query import CONCEPT_TOP_K, _citations, ask, ask_stream
 from src.services.storage.catalog_store import (
     DEFAULT_COLLEGE_ID,
     DEFAULT_COURSE_ID,
@@ -38,6 +39,34 @@ def _hits():
             "metadata": {"source_file": "ch1.md", "page": 1},
         }
     ]
+
+
+def test_citation_exposes_document_structure_provenance():
+    raw = generation._build_citations(
+        [
+            {
+                "text": "表格中的采样频率定义",
+                "score": 0.8,
+                "metadata": {
+                    "doc_id": "42",
+                    "source_file": "signals.pdf",
+                    "page": 12,
+                    "chapter": "第二章 采样",
+                    "section_path": "第二章 采样 / 2.1 定理",
+                    "block_type": "table",
+                    "bbox": "10.00,20.00,300.00,120.00",
+                    "parser_name": "mineru:high",
+                    "parse_quality": 0.91,
+                },
+            }
+        ]
+    )
+    citation = _citations(raw)[0]
+    assert citation.doc_id == "42"
+    assert citation.section_path == "第二章 采样 / 2.1 定理"
+    assert citation.bbox == "10.00,20.00,300.00,120.00"
+    assert citation.parser_name == "mineru:high"
+    assert citation.parse_quality == 0.91
 
 
 class TestAskStream:
@@ -103,6 +132,44 @@ class TestAskStream:
                 assert resp.status_code == 200
                 assert "未找到相关内容" in "".join(resp.iter_text())
 
+    def test_question_generation_routes_without_retrieval_or_llm(self):
+        with patch("src.services.query.retrieve") as mock_retrieve:
+            with client.stream(
+                "POST",
+                "/api/v1/ask",
+                json={**_ASK, "question": "给我出几个期末的线代大题"},
+            ) as resp:
+                events = [
+                    json.loads(line[6:])
+                    for line in resp.iter_lines()
+                    if line.startswith("data: ")
+                ]
+        mock_retrieve.assert_not_called()
+        assert events[0]["phase"] == "routing"
+        assert events[-1]["data"]["intent"]["task"] == "question_generate"
+        assert "我的题库" in events[-1]["data"]["answer"]
+
+
+class TestStreamGeneration:
+    def test_reasoning_status_is_forwarded_before_content(self):
+        llm = MagicMock()
+        llm.chat_stream.return_value = iter(
+            [
+                {"type": "status", "status": "reasoning"},
+                {"type": "content", "text": "答案"},
+            ]
+        )
+        events = list(generation.stream_generate(_hits(), "测试", llm))
+        assert events[0] == {"type": "phase", "phase": "reasoning"}
+        assert events[1] == {"type": "delta", "text": "答案"}
+        assert events[-1]["data"]["answer"] == "答案"
+
+    def test_empty_stream_is_an_explicit_error(self):
+        llm = MagicMock()
+        llm.chat_stream.return_value = iter([])
+        with pytest.raises(LLMAPIException, match="没有返回可显示"):
+            list(generation.stream_generate(_hits(), "测试", llm))
+
 
 class TestAskModes:
     def test_auto_mode_routes_chapter_intent(self):
@@ -134,6 +201,38 @@ class TestAskModes:
         assert "定义" in msgs[0]["content"]
         assert "公式" in msgs[0]["content"]
         assert "例题" in msgs[0]["content"]
+
+    def test_formula_evidence_is_explicitly_labeled_for_llm(self):
+        msgs = generation._build_messages(
+            [
+                {
+                    "text": r"公式：$$n=\sqrt{\varepsilon_r}$$",
+                    "metadata": {"source_file": "paper.pdf", "block_type": "formula"},
+                }
+            ],
+            "折射率与载流子浓度的关系是什么？",
+            mode="qa",
+        )
+
+        assert "不得称其仍是图片" in msgs[0]["content"]
+        assert "公式证据" in msgs[-1]["content"]
+        assert r"n=\sqrt{\varepsilon_r}" in msgs[-1]["content"]
+
+    def test_qa_prompt_requires_complete_numbered_lists(self):
+        msgs = generation._build_messages(
+            [
+                {
+                    "text": "共四个必要条件：(1)A。(2)B。(3)C。(4)D。",
+                    "metadata": {"source_file": "paper.pdf", "block_type": "text"},
+                }
+            ],
+            "有哪些必要条件？",
+            mode="qa",
+        )
+
+        assert "共 N 项" in msgs[0]["content"]
+        assert "去重后完整列出" in msgs[0]["content"]
+        assert "不要在正文中输出【……】来源标签" in msgs[0]["content"]
 
     def test_chapter_prompt_structure(self):
         msgs = generation._build_messages(

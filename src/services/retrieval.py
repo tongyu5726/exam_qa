@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 from collections import Counter
 from functools import lru_cache
 
@@ -15,6 +16,33 @@ from src.services.storage.vector_store import ChromaVectorStore
 logger = logging.getLogger(__name__)
 
 RRF_K = 60
+_FORMULA_QUERY = re.compile(
+    r"公式|表达式|关系式|方程|恒等式|推导|推导过程|数学关系|"
+    r"(?:与|和).{1,30}(?:之间)?的?关系(?:是什么|如何|怎样|怎么|$)"
+)
+_LIST_QUERY = re.compile(
+    r"有哪些|哪些|列出|列举|分别(?:是|为)|包括什么|"
+    r"几(?:个|条|项|种|步|点|方面|类)|"
+    r"必要条件|充分条件|条件|要点|步骤|流程|特点|特征|"
+    r"原因|因素|类型|分类|组成|构成|注意事项|要求|原则|措施|方面"
+)
+_LIST_CONTEXT_CUE = re.compile(
+    r"(?:综上|如下|分别|包括|包含|归纳|得出|共有|共计|分为)"
+    r".{0,60}(?:条件|步骤|原因|要点|特点|原则|方法|类型|方面|项)"
+)
+_LIST_COUNT = re.compile(
+    r"([0-9]{1,2}|[一二三四五六七八九十两]{1,3})\s*"
+    r"(?:个|条|项|种|步|点|方面|类)\s*"
+    r"(?:必要|充分|主要|基本|核心|关键|具体)?\s*"
+    r"(?:条件|要求|步骤|原因|特点|要点|原则|方法|类型|方面|内容)?"
+)
+_ARABIC_LIST_ITEM = re.compile(
+    r"(?m)(?:^|\n)\s*(?:[（(]\s*(\d{1,2})\s*[）)]|(\d{1,2})\s*[、.．])"
+)
+_CHINESE_LIST_ITEM = re.compile(
+    r"(?m)(?:^|\n)\s*(?:[（(]\s*([一二三四五六七八九十两]{1,3})\s*[）)]|"
+    r"([一二三四五六七八九十两]{1,3})\s*[、.])"
+)
 
 from src.services.tokenizer import tokenize  # noqa: E402
 
@@ -183,6 +211,257 @@ def _select_evidence(hits: list[dict]) -> list[dict]:
     )
 
 
+def _is_formula_query(query: str) -> bool:
+    """规则层识别明确的公式型查询，避免为普通问答扩大证据集。"""
+    return bool(_FORMULA_QUERY.search(query))
+
+
+def _chinese_number(value: str) -> int | None:
+    """解析列表中常见的一到九十九；超出范围时不做猜测。"""
+    digits = {"一": 1, "二": 2, "两": 2, "三": 3, "四": 4, "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    if value == "十":
+        return 10
+    if "十" in value:
+        left, right = value.split("十", 1)
+        tens = digits.get(left, 1) if left else 1
+        ones = digits.get(right, 0) if right else 0
+        return tens * 10 + ones
+    return digits.get(value)
+
+
+def _number_value(value: str) -> int | None:
+    if value.isdigit():
+        number = int(value)
+        return number if 0 < number <= 99 else None
+    return _chinese_number(value)
+
+
+def _list_item_numbers(text: str) -> set[int]:
+    numbers: set[int] = set()
+    for match in _ARABIC_LIST_ITEM.finditer(text or ""):
+        value = match.group(1) or match.group(2)
+        if value:
+            numbers.add(int(value))
+    for match in _CHINESE_LIST_ITEM.finditer(text or ""):
+        value = match.group(1) or match.group(2)
+        number = _chinese_number(value) if value else None
+        if number:
+            numbers.add(number)
+    return numbers
+
+
+def _expected_list_count(text: str) -> int | None:
+    counts = [
+        number
+        for match in _LIST_COUNT.finditer(text or "")
+        if (number := _number_value(match.group(1))) is not None
+    ]
+    return max(counts) if counts else None
+
+
+def _is_list_query(query: str) -> bool:
+    """识别期望得到完整枚举结果的问题。"""
+    return bool(_LIST_QUERY.search(query))
+
+
+def _expand_list_evidence(
+    query: str,
+    anchors: list[dict],
+    vs: ChromaVectorStore,
+    course_id: str,
+    top_k: int,
+    *,
+    scenario: str | None = None,
+    as_of: str | None = None,
+) -> list[dict]:
+    """命中列表标题/编号项后，补齐附近的连续编号块。"""
+    by_doc: dict[str, list[dict]] = {}
+    for hit in anchors:
+        meta = hit.get("metadata") or {}
+        doc_id = str(meta.get("doc_id") or "")
+        chunk_index = meta.get("chunk_index")
+        if doc_id and isinstance(chunk_index, int):
+            by_doc.setdefault(doc_id, []).append(hit)
+
+    expanded: list[dict] = []
+    seen_ids = {str(hit.get("id") or "") for hit in anchors}
+    for doc_id, doc_anchors in by_doc.items():
+        kwargs: dict[str, object] = {"course_id": course_id, "doc_id": doc_id, "limit": 2000}
+        if scenario:
+            kwargs["scenario"] = scenario
+        if as_of:
+            kwargs["as_of"] = as_of
+        try:
+            rows = vs.get_chunks(**kwargs)
+        except Exception as exc:
+            logger.warning("列表完整性证据读取失败 doc_id=%s: %s", doc_id, exc)
+            continue
+
+        rows = [
+            row
+            for row in rows
+            if (row.get("metadata") or {}).get("block_type") != "formula"
+            and isinstance((row.get("metadata") or {}).get("chunk_index"), int)
+        ]
+        rows.sort(key=lambda row: int((row.get("metadata") or {}).get("chunk_index") or 0))
+
+        for anchor in sorted(doc_anchors, key=lambda hit: float(hit.get("score") or 0.0), reverse=True):
+            anchor_meta = anchor.get("metadata") or {}
+            anchor_index = int(anchor_meta.get("chunk_index") or 0)
+            anchor_page = anchor_meta.get("page")
+            window: list[dict] = []
+            for row in rows:
+                meta = row.get("metadata") or {}
+                chunk_index = int(meta.get("chunk_index") or 0)
+                if not (anchor_index - 2 <= chunk_index <= anchor_index + 12):
+                    continue
+                page = meta.get("page")
+                if (
+                    isinstance(anchor_page, int)
+                    and anchor_page > 0
+                    and isinstance(page, int)
+                    and page > 0
+                    and abs(page - anchor_page) > 1
+                ):
+                    continue
+                window.append(row)
+
+            local_text = "\n".join(str(row.get("text") or "") for row in window)
+            expected = _expected_list_count(f"{query}\n{local_text}")
+            item_rows = [row for row in window if _list_item_numbers(str(row.get("text") or ""))]
+            all_numbers = (
+                set().union(*(_list_item_numbers(str(row.get("text") or "")) for row in item_rows))
+                if item_rows
+                else set()
+            )
+            anchor_numbers = _list_item_numbers(str(anchor.get("text") or ""))
+            has_cue = bool(_LIST_CONTEXT_CUE.search(local_text))
+            if not item_rows or 1 not in all_numbers:
+                continue
+            if expected is None and not has_cue and not (anchor_numbers and len(all_numbers) >= 2):
+                continue
+
+            target = (
+                set(range(1, expected + 1))
+                if expected
+                else set(range(1, min(max(all_numbers), 12) + 1))
+            )
+            nearby_anchors = [
+                hit
+                for hit in doc_anchors
+                if abs(int((hit.get("metadata") or {}).get("chunk_index") or 0) - anchor_index) <= 12
+            ]
+            coverage = (
+                set().union(*(_list_item_numbers(str(hit.get("text") or "")) for hit in nearby_anchors))
+                if nearby_anchors
+                else set()
+            )
+            anchor_score = max(float(hit.get("score") or 0.0) for hit in doc_anchors)
+            expansion_limit = min(12, max(top_k * 2, expected or 0, 4))
+            for row in item_rows:
+                numbers = _list_item_numbers(str(row.get("text") or ""))
+                if not ((numbers & target) - coverage):
+                    continue
+                coverage.update(numbers)
+                chunk_id = str(row.get("id") or "")
+                if chunk_id and chunk_id not in seen_ids:
+                    seen_ids.add(chunk_id)
+                    item = dict(row)
+                    meta = dict(row.get("metadata") or {})
+                    item["metadata"] = meta
+                    distance = abs(int(meta.get("chunk_index") or 0) - anchor_index)
+                    item["score"] = max(
+                        float(item.get("score") or 0.0),
+                        anchor_score - 0.005 * (distance + 1),
+                    )
+                    meta["retrieval_reason"] = "list_completion"
+                    expanded.append(item)
+                if target.issubset(coverage) or len(expanded) >= expansion_limit:
+                    break
+            if target.issubset(coverage):
+                break
+    return expanded
+
+
+def _expand_formula_evidence(
+    query: str,
+    anchors: list[dict],
+    vs: ChromaVectorStore,
+    course_id: str,
+    top_k: int,
+    *,
+    scenario: str | None = None,
+    as_of: str | None = None,
+) -> list[dict]:
+    """按正文命中的文档和页码，补召回同页及相邻页的独立公式块。"""
+    by_doc: dict[str, list[dict]] = {}
+    for hit in anchors:
+        meta = hit.get("metadata") or {}
+        if meta.get("block_type") == "formula":
+            continue
+        doc_id = str(meta.get("doc_id") or "")
+        page = meta.get("page")
+        if not doc_id or not isinstance(page, int) or page < 1:
+            continue
+        by_doc.setdefault(doc_id, []).append(hit)
+
+    candidates: list[tuple[int, int, int, dict]] = []
+    query_tokens = set(tokenize(query))
+    for doc_id, doc_anchors in by_doc.items():
+        kwargs: dict[str, object] = {
+            "course_id": course_id,
+            "doc_id": doc_id,
+            "block_type": "formula",
+            "limit": 500,
+        }
+        if scenario:
+            kwargs["scenario"] = scenario
+        if as_of:
+            kwargs["as_of"] = as_of
+        try:
+            formulas = vs.get_chunks(**kwargs)
+        except Exception as exc:
+            # 邻页扩展属于增益路径；读取失败时仍保留原始混合检索结果。
+            logger.warning("公式邻页证据读取失败 doc_id=%s: %s", doc_id, exc)
+            continue
+        anchor_pages = [int((hit.get("metadata") or {})["page"]) for hit in doc_anchors]
+        for formula in formulas:
+            meta = formula.get("metadata") or {}
+            page = meta.get("page")
+            if not isinstance(page, int) or page < 1:
+                continue
+            distance = min(abs(page - anchor_page) for anchor_page in anchor_pages)
+            if distance > 1:
+                continue
+            searchable = f"{formula.get('text', '')} {meta.get('context', '')} {meta.get('section_path', '')}"
+            overlap = len(query_tokens.intersection(tokenize(searchable)))
+            candidates.append(
+                (-overlap, distance, int(meta.get("chunk_index") or 0), formula)
+            )
+
+    # 公式页通常包含一组连续推导；保留最多 top_k 条，不让长论文无限扩大 prompt。
+    limit = max(3, min(top_k, 8))
+    expanded: list[dict] = []
+    # 已经由向量/BM25 命中的公式不占扩展名额，把预算留给尚未出现的关键公式。
+    seen: set[str] = {str(hit.get("id") or "") for hit in anchors}
+    for _, distance, _, formula in sorted(candidates, key=lambda item: item[:3]):
+        chunk_id = str(formula.get("id") or "")
+        if not chunk_id or chunk_id in seen:
+            continue
+        seen.add(chunk_id)
+        item = dict(formula)
+        meta = dict(formula.get("metadata") or {})
+        item["metadata"] = meta
+        same_doc_anchors = by_doc.get(str(meta.get("doc_id") or ""), [])
+        anchor_score = max((float(hit.get("score") or 0.0) for hit in same_doc_anchors), default=0.0)
+        item["score"] = max(float(item.get("score") or 0.0), anchor_score - 0.01 * (distance + 1))
+        meta["retrieval_reason"] = "formula_same_page" if distance == 0 else "formula_adjacent_page"
+        expanded.append(item)
+        if len(expanded) >= limit:
+            break
+    return expanded
+
+
 def retrieve(
     query: str,
     vs: ChromaVectorStore,
@@ -241,16 +520,74 @@ def retrieve(
     else:
         kept = [h for h in fused if h.get("score", 0) >= score_threshold]
 
+    formula_query = _is_formula_query(q)
+    list_query = _is_list_query(q)
+    # 列表问题中，单符号公式容易挤掉真正的编号项。
+    # 除非问题同时明确要求公式，先将召回名额留给正文。
+    if list_query and not formula_query:
+        kept = [
+            hit
+            for hit in kept
+            if (hit.get("metadata") or {}).get("block_type") != "formula"
+        ]
+
+    list_hits: list[dict] = []
+    if list_query and kept:
+        list_hits = _expand_list_evidence(
+            q,
+            kept,
+            vs,
+            course_id,
+            top_k,
+            scenario=scenario,
+            as_of=as_of,
+        )
+        kept.extend(list_hits)
+
+    formula_hits: list[dict] = []
+    if formula_query and kept:
+        formula_hits = _expand_formula_evidence(
+            q,
+            kept,
+            vs,
+            course_id,
+            top_k,
+            scenario=scenario,
+            as_of=as_of,
+        )
+        # 正文先给出语义范围，再给公式；扩展命中的公式优先于初筛里常见的
+        # 单符号碎片，并限制公式总量，避免公式型问题让 prompt 无上限膨胀。
+        body_hits = [
+            hit for hit in kept if (hit.get("metadata") or {}).get("block_type") != "formula"
+        ]
+        formula_candidates = formula_hits + [
+            hit for hit in kept if (hit.get("metadata") or {}).get("block_type") == "formula"
+        ]
+        formula_limit = max(3, min(top_k, 8))
+        selected_formulas: list[dict] = []
+        seen_formula_ids: set[str] = set()
+        for hit in formula_candidates:
+            chunk_id = str(hit.get("id") or "")
+            if not chunk_id or chunk_id in seen_formula_ids:
+                continue
+            seen_formula_ids.add(chunk_id)
+            selected_formulas.append(hit)
+            if len(selected_formulas) >= formula_limit:
+                break
+        kept = body_hits + selected_formulas
+
     if scenario or as_of:
         kept = _select_evidence(kept)
 
     logger.info(
-        "混合检索: course=%s scenario=%s as_of=%s top_k=%d rerank=%s vec=%d bm25=%d kept=%d",
+        "混合检索: course=%s scenario=%s as_of=%s top_k=%d rerank=%s vec=%d bm25=%d list=%d formula=%d kept=%d",
         course_id, scenario or "all", as_of or "latest",
         top_k,
         rerank_enabled,
         len(vec_hits),
         len(bm25_hits),
+        len(list_hits),
+        len(formula_hits),
         len(kept),
     )
     return kept

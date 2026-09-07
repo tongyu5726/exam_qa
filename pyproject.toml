@@ -17,11 +17,18 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "jieba>=0.42",
     "langgraph>=1.2.11",
-    "torch>=2.13.0",
+    "chardet>=5.2,<6",
+    "torch>=2.6",
 ]
 
 [project.scripts]
 exam = "src.main:main"
+
+[project.optional-dependencies]
+formula = [
+    "paddleocr[doc-parser]>=3.7.0",
+    "paddlepaddle>=3.3.1",
+]
 
 [build-system]
 requires = ["hatchling"]

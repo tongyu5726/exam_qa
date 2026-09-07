@@ -3,10 +3,11 @@
 import tempfile
 from io import BytesIO
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
+from src.dependencies import get_catalog_store, get_doc_store
 from src.main import app
 from src.services import llm_providers as registry
 
@@ -137,6 +138,53 @@ class TestDocumentsAPI:
     def test_delete_requires_course_and_404(self):
         r = client.delete("/api/v1/documents/99999?course_id=course-default")
         assert r.status_code == 404
+
+    def test_open_source_serves_only_current_course(self, temp_dir):
+        source = temp_dir / "source.md"
+        source.write_text("# 原文内容", encoding="utf-8")
+        ds, catalog = MagicMock(), MagicMock()
+        ds.get.return_value = {
+            "id": 7,
+            "course_id": "course-default",
+            "filename": "课程资料.md",
+            "file_path": str(source),
+        }
+        app.dependency_overrides[get_doc_store] = lambda: ds
+        app.dependency_overrides[get_catalog_store] = lambda: catalog
+        try:
+            response = client.get(
+                "/api/v1/documents/7/source",
+                params={"course_id": "course-default"},
+            )
+        finally:
+            app.dependency_overrides.pop(get_doc_store, None)
+            app.dependency_overrides.pop(get_catalog_store, None)
+        assert response.status_code == 200
+        assert response.text == "# 原文内容"
+        assert "inline" in response.headers["content-disposition"]
+        catalog.require_course.assert_called_once_with("course-default")
+
+    def test_open_source_rejects_other_course(self, temp_dir):
+        source = temp_dir / "source.md"
+        source.write_text("# 原文内容", encoding="utf-8")
+        ds, catalog = MagicMock(), MagicMock()
+        ds.get.return_value = {
+            "id": 7,
+            "course_id": "course-other",
+            "filename": "课程资料.md",
+            "file_path": str(source),
+        }
+        app.dependency_overrides[get_doc_store] = lambda: ds
+        app.dependency_overrides[get_catalog_store] = lambda: catalog
+        try:
+            response = client.get(
+                "/api/v1/documents/7/source",
+                params={"course_id": "course-default"},
+            )
+        finally:
+            app.dependency_overrides.pop(get_doc_store, None)
+            app.dependency_overrides.pop(get_catalog_store, None)
+        assert response.status_code == 404
 
 
 class TestConfigAndProviders:

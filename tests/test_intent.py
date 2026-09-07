@@ -23,6 +23,18 @@ def test_rule_routes_chapter_in_auto_mode():
     assert decision.task == "chapter"
 
 
+def test_rule_routes_question_generation_before_exam_scenario():
+    decision = resolve_intent("给我出几个期末的线代大题", requested_mode="auto")
+    assert decision.task == "question_generate"
+    assert decision.scenario == "考试"
+    assert decision.layer == "rule"
+
+
+def test_question_explanation_is_not_misrouted_to_generation():
+    decision = resolve_intent("这道大题怎么做？", requested_mode="auto")
+    assert decision.task == "qa"
+
+
 def test_explicit_mode_and_filters_override_auto_intent():
     decision = resolve_intent(
         "第3章最新内容", requested_mode="qa", scenario="实验", as_of="2026-01-01"

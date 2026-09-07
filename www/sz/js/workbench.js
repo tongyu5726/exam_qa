@@ -31,29 +31,64 @@ function escapeHtml(s) {
     .replace(/"/g, "&quot;");
 }
 
+function cleanAnswerForDisplay(answer, cites = []) {
+  const sources = (cites || [])
+    .map((c) => String(c.source_file || "").replace(/\.(pdf|txt|md|docx?|pptx)$/i, ""))
+    .filter(Boolean);
+  return String(answer || "")
+    .replace(/\s*【([^】]{1,500})】/g, (full, label) => {
+      if (/正文证据|公式证据/.test(label)) return "";
+      return sources.some((source) => label.includes(source)) ? "" : full;
+    })
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 function renderCitations(el, cites) {
   if (!el) return;
   if (!cites?.length) {
     el.innerHTML = "";
     return;
   }
-  el.innerHTML = cites
+  const courseId = getCourseId();
+  const cards = cites
     .map((c, i) => {
-      const score =
-        typeof c.score === "number"
-          ? c.score.toFixed(3)
-          : c.score != null
-            ? String(c.score)
-            : "";
-      const page = c.page != null ? ` p.${c.page}` : "";
-      return `<details class="sz-cite">
-        <summary>[${i + 1}] ${escapeHtml(c.source_file || "")}${page}${
-          score ? ` · ${escapeHtml(score)}` : ""
-        }</summary>
-        <pre>${escapeHtml(c.snippet || "")}</pre>
-      </details>`;
+      const page = c.page != null ? `第 ${escapeHtml(c.page)} 页` : "页码未标注";
+      const kind = c.block_type === "formula" ? "公式" : "正文";
+      const section = c.section_path || c.chapter || "";
+      const sourceUrl = c.doc_id
+        ? `/api/v1/documents/${encodeURIComponent(String(c.doc_id))}/source?course_id=${encodeURIComponent(courseId)}${
+            c.page != null ? `#page=${encodeURIComponent(String(c.page))}` : ""
+          }`
+        : "";
+      return `<article class="sz-evidence-card">
+        <div class="sz-evidence-card-head">
+          <span class="sz-evidence-index">${i + 1}</span>
+          <div class="sz-evidence-title">
+            <strong>${escapeHtml(c.source_file || "未知资料")}</strong>
+            <span>${page}${section ? ` · ${escapeHtml(section)}` : ""}</span>
+          </div>
+          <span class="sz-evidence-kind">${kind}</span>
+        </div>
+        <p class="sz-evidence-snippet">${escapeHtml(c.snippet || "暂无摘要")}</p>
+        ${
+          sourceUrl
+            ? `<a class="sz-evidence-open" href="${sourceUrl}" target="_blank" rel="noopener">打开源文档 <span aria-hidden="true">↗</span></a>`
+            : ""
+        }
+      </article>`;
     })
     .join("");
+  el.innerHTML = `<details class="sz-evidence-portal">
+    <summary>
+      <span class="sz-evidence-portal-icon" aria-hidden="true">≡</span>
+      <span>查看回答依据</span>
+      <span class="sz-evidence-count">${cites.length}</span>
+      <span class="sz-evidence-chevron" aria-hidden="true">⌄</span>
+    </summary>
+    <div class="sz-evidence-list">${cards}</div>
+  </details>`;
 }
 
 function renderAnswerMath(el) {
@@ -101,7 +136,7 @@ function paintTurn(node, turn) {
   text.textContent = turn.question || "";
   q.append(label, text);
   const a = node.querySelector(".sz-a");
-  a.textContent = turn.answer || "";
+  a.textContent = cleanAnswerForDisplay(turn.answer, turn.citations || []);
   if (turn.grounded === false) a.dataset.grounded = "false";
   else if (turn.grounded === true) a.dataset.grounded = "true";
   renderCitations(node.querySelector(".sz-cites"), turn.citations || []);
@@ -292,6 +327,7 @@ function setupAsk() {
 
     let answer = "";
     let resolvedMode = mode;
+    let resolvedTask = "qa";
     const turnWrap = document.createElement("div");
     turnWrap.className = "sz-turn";
     turnWrap.dataset.mode = mode;
@@ -319,6 +355,7 @@ function setupAsk() {
       await apiAskStream({ question, course_id: courseId, mode, conversation_id: convId || undefined }, (ev) => {
         if (ev.type === "phase") {
           if (ev.intent?.mode) resolvedMode = ev.intent.mode;
+          if (ev.intent?.task) resolvedTask = ev.intent.task;
           live.dataset.phase = ev.phase || "";
           if (!answer) {
             live.textContent =
@@ -332,21 +369,30 @@ function setupAsk() {
                     : mode === "chapter"
                       ? "生成概览中…"
                       : "生成中…"
+                  : ev.phase === "reasoning"
+                    ? "模型正在推理，请稍候…"
+                  : ev.phase === "routing"
+                    ? "正在转到我的题库…"
                   : "";
           }
         } else if (ev.type === "delta") {
           answer += ev.text || "";
-          live.textContent = answer;
+          live.textContent = cleanAnswerForDisplay(answer);
           streamEl.scrollTop = streamEl.scrollHeight;
         } else if (ev.type === "done") {
           const d = ev.data || {};
           answer = d.answer || answer;
-          live.textContent = answer;
+          live.textContent = cleanAnswerForDisplay(answer, d.citations || []);
           delete live.dataset.phase;
           grounded = !!d.grounded;
           live.dataset.grounded = String(grounded);
           citations = d.citations || [];
           renderCitations(citesEl, citations);
+          resolvedTask = d.intent?.task || resolvedTask;
+          if (resolvedTask === "question_generate") {
+            const bankUrl = `/sz-bank/?topic=${encodeURIComponent(question)}`;
+            citesEl.innerHTML = `<a class="sz-bank-route" href="${bankUrl}">打开我的题库 <span aria-hidden="true">→</span></a>`;
+          }
           renderAnswerMath(live);
           streamEl.scrollTop = streamEl.scrollHeight;
           finished = true;

@@ -59,7 +59,11 @@ class LLMConfig:
     base_url: str = field(default_factory=lambda: os.getenv("LLM_BASE_URL", "https://api.openai.com/v1"))
     model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "gpt-4o-mini"))
     temperature: float = 0.3
-    max_tokens: int = 2048
+    # 深度推理模型会把推理过程与最终正文共同计入输出预算；允许通过环境变量调整，
+    # 默认 4096，避免推理耗尽 2048 后留下空正文。
+    max_tokens: int = field(
+        default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "4096"))
+    )
     timeout: int = field(default_factory=lambda: int(os.getenv("LLM_TIMEOUT", "60")))
 
 
@@ -81,6 +85,7 @@ class EmbeddingConfig:
     api_key: str = field(default_factory=lambda: os.getenv("EMBEDDING_API_KEY", ""))
     base_url: str = field(default_factory=lambda: os.getenv("EMBEDDING_BASE_URL", ""))
     timeout: int = field(default_factory=lambda: int(os.getenv("EMBEDDING_TIMEOUT", "60")))
+    device: str = field(default_factory=lambda: os.getenv("EMBEDDING_DEVICE", "auto"))
 
     def resolve_api_key(self, llm: LLMConfig) -> str:
         """Embedding 专用 key 优先，未设则回退 LLM key。"""
@@ -97,6 +102,10 @@ class StorageConfig:
     sqlite_path: str = field(default_factory=lambda: os.getenv("SQLITE_PATH", "./storage/meta.db"))
     log_path: str = field(default_factory=lambda: os.getenv("LOG_PATH", "./storage/app.log"))
     knowledge_dir: str = field(default_factory=lambda: os.getenv("KNOWLEDGE_DIR", "data/knowledge"))
+    # 外部 PDF 解析器会在临时目录输出页面图片；入库前复制到这里，供后续视觉理解使用。
+    parsed_assets_dir: str = field(
+        default_factory=lambda: os.getenv("PARSED_ASSETS_DIR", "storage/parsed_assets")
+    )
 
 
 @dataclass
@@ -124,6 +133,7 @@ class RetrievalConfig:
     rerank_candidates: int = field(
         default_factory=lambda: int(os.getenv("RERANK_CANDIDATES", "20"))
     )
+    rerank_device: str = field(default_factory=lambda: os.getenv("RERANK_DEVICE", "auto"))
     rerank_top_n: int = field(
         default_factory=lambda: int(os.getenv("RERANK_TOP_N", "0"))
     )  # 0 → 回退 top_k
@@ -142,7 +152,11 @@ class ParsingConfig:
     pdf_ocr_language: str = field(
         default_factory=lambda: os.getenv("PDF_OCR_LANGUAGE", "eng+chi_sim")
     )
-    # PDF 解析器: mineru(MinerU 结构解析,默认) | pymupdf(现有链路) | auto(原生文本直提,扫描件自动用 MinerU)
+    # Tesseract 语言包目录。空值时使用 Tesseract 的默认安装目录。
+    tessdata_prefix: str = field(
+        default_factory=lambda: os.getenv("TESSDATA_PREFIX", "").strip()
+    )
+    # PDF 解析器: mineru(MinerU 结构解析,默认) | markpdfdown(外部增强) | pymupdf | auto
     pdf_parser: str = field(
         default_factory=lambda: (os.getenv("PDF_PARSER") or "mineru").strip().lower() or "mineru"
     )
@@ -152,6 +166,68 @@ class ParsingConfig:
     # 秒；0 = 不限时。默认 1800s 兜底，避免异常 CLI 无限挂起
     mineru_timeout: int = field(
         default_factory=lambda: int(os.getenv("MINERU_TIMEOUT", "1800"))
+    )
+    mineru_backend: str = field(
+        default_factory=lambda: (os.getenv("MINERU_BACKEND") or "hybrid-engine").strip() or "hybrid-engine"
+    )
+    mineru_effort: str = field(
+        default_factory=lambda: (os.getenv("MINERU_EFFORT") or "medium").strip().lower() or "medium"
+    )
+    mineru_lang: str = field(
+        default_factory=lambda: (os.getenv("MINERU_LANG") or "ch").strip() or "ch"
+    )
+    mineru_formula: bool = field(
+        default_factory=lambda: os.getenv("MINERU_FORMULA", "true").lower() == "true"
+    )
+    mineru_table: bool = field(
+        default_factory=lambda: os.getenv("MINERU_TABLE", "true").lower() == "true"
+    )
+    mineru_image_analysis: bool = field(
+        default_factory=lambda: os.getenv("MINERU_IMAGE_ANALYSIS", "true").lower() == "true"
+    )
+    # 质量不足时，自动以 high effort 再跑一次 MinerU；仅高精度结果更好时替换。
+    mineru_retry_high: bool = field(
+        default_factory=lambda: os.getenv("MINERU_RETRY_HIGH", "true").lower() == "true"
+    )
+    pdf_quality_threshold: float = field(
+        default_factory=lambda: float(os.getenv("PDF_QUALITY_THRESHOLD", "0.55"))
+    )
+    # 全文公式补偿：仅在结构化解析失败后，对 PDF 全页执行公式区域检测与 LaTeX 识别。
+    # 默认关闭，避免首次模型下载和 CPU 推理拖慢普通资料入库。
+    formula_recognition_enabled: bool = field(
+        default_factory=lambda: os.getenv("FORMULA_RECOGNITION_ENABLED", "false").lower() == "true"
+    )
+    formula_recognition_device: str = field(
+        default_factory=lambda: (os.getenv("FORMULA_RECOGNITION_DEVICE") or "auto").strip() or "auto"
+    )
+    formula_recognition_model: str = field(
+        default_factory=lambda: (os.getenv("FORMULA_RECOGNITION_MODEL") or "PP-FormulaNet_plus-M").strip()
+        or "PP-FormulaNet_plus-M"
+    )
+    # Paddle 3.3.x 的部分公式模型在 Windows CPU oneDNN 后端会触发
+    # ConvertPirAttribute2RuntimeAttribute；默认关闭以保证推理可用。
+    formula_recognition_enable_mkldnn: bool = field(
+        default_factory=lambda: os.getenv(
+            "FORMULA_RECOGNITION_ENABLE_MKLDNN", "false"
+        ).lower()
+        == "true"
+    )
+    # 独立公式识别子进程超时；0 = 不限时。
+    formula_recognition_timeout: int = field(
+        default_factory=lambda: int(os.getenv("FORMULA_RECOGNITION_TIMEOUT", "1800"))
+    )
+    # MarkPDFdown 未绑定稳定 CLI 前保持关闭。启用时必须显式提供命令及带 {input}/{output} 的参数模板。
+    markpdfdown_enabled: bool = field(
+        default_factory=lambda: os.getenv("MARKPDFDOWN_ENABLED", "false").lower() == "true"
+    )
+    markpdfdown_cmd: str = field(
+        default_factory=lambda: os.getenv("MARKPDFDOWN_CMD", "").strip()
+    )
+    markpdfdown_args: str = field(
+        default_factory=lambda: os.getenv("MARKPDFDOWN_ARGS", "").strip()
+    )
+    markpdfdown_timeout: int = field(
+        default_factory=lambda: int(os.getenv("MARKPDFDOWN_TIMEOUT", "1800"))
     )
     # 多模态视觉理解（图表/图片摘要）：空 = 关闭；OpenAI 兼容视觉模型，如 qwen-vl-max / gpt-4o
     visual_model: str = field(
@@ -193,6 +269,11 @@ class AppConfig:
 
     def validate(self) -> None:
         """启动时校验配置，非法值尽早失败。"""
+        from src.services.inference_device import validate_device
+
+        validate_device(self.embedding.device)
+        validate_device(self.retrieval.rerank_device)
+        validate_device(self.parsing.formula_recognition_device, paddle=True)
         provider = self.embedding.provider.strip().lower()
         if provider not in ("local", "openai"):
             raise ValueError(
@@ -204,16 +285,26 @@ class AppConfig:
                 f"LOG_LEVEL 无效: {self.log_level!r}，可选 DEBUG / INFO / WARNING / ERROR"
             )
         self.log_level = level
+        if self.llm.max_tokens <= 0:
+            raise ValueError("LLM_MAX_TOKENS 必须大于 0")
+        if self.llm.timeout <= 0:
+            raise ValueError("LLM_TIMEOUT 必须大于 0")
         if self.chunk.chunk_size <= 0:
             raise ValueError("chunk_size 必须大于 0")
         if self.chunk.chunk_overlap >= self.chunk.chunk_size:
             raise ValueError("chunk_overlap 必须小于 chunk_size")
-        if self.parsing.pdf_parser not in ("auto", "pymupdf", "mineru"):
+        if self.parsing.pdf_parser not in ("auto", "pymupdf", "mineru", "markpdfdown"):
             raise ValueError(
-                f"PDF_PARSER 无效: {self.parsing.pdf_parser!r}，可选 auto / pymupdf / mineru"
+                f"PDF_PARSER 无效: {self.parsing.pdf_parser!r}，可选 auto / pymupdf / mineru / markpdfdown"
             )
         if self.parsing.mineru_timeout < 0:
             raise ValueError("mineru_timeout 必须 >= 0")
+        if self.parsing.markpdfdown_timeout < 0:
+            raise ValueError("markpdfdown_timeout 必须 >= 0")
+        if self.parsing.mineru_effort not in ("medium", "high"):
+            raise ValueError("mineru_effort 可选 medium / high")
+        if not (0 <= self.parsing.pdf_quality_threshold <= 1):
+            raise ValueError("pdf_quality_threshold 须在 0～1")
         if self.parsing.visual_timeout < 0:
             raise ValueError("visual_timeout 必须 >= 0")
         if self.max_upload_mb <= 0:

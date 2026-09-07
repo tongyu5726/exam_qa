@@ -57,5 +57,13 @@ desktop.ini
 
 .uv-cache/
 .pytest-tmp/
+/.tmp/
+/pytest-temp*/
+# 本地模型、下载的安装包与凭据
+/models/
+/.cache/
+*.whl
+*.pem
+*.key
 
 pytest_v3.txt

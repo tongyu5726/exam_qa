@@ -47,6 +47,7 @@ def _build_config_data(request: Request) -> dict:
         "embedding": {
             "provider": emb.provider,
             "model": emb.model,
+            "device": emb.device,
             "base_url": emb.resolve_base_url(llm),
             "timeout": emb.timeout,
             "configured": bool(emb.resolve_api_key(llm)),
@@ -57,6 +58,7 @@ def _build_config_data(request: Request) -> dict:
             "score_threshold": config.retrieval.score_threshold,
             "rerank_enabled": config.retrieval.rerank_enabled,
             "rerank_model": config.retrieval.rerank_model,
+            "rerank_device": config.retrieval.rerank_device,
             "rerank_candidates": config.retrieval.rerank_candidates,
             "rerank_top_n": config.retrieval.rerank_top_n,
         },
@@ -74,6 +76,24 @@ def _build_config_data(request: Request) -> dict:
             "pdf_parser": config.parsing.pdf_parser,
             "mineru_cmd": config.parsing.mineru_cmd,
             "mineru_timeout": config.parsing.mineru_timeout,
+            "mineru_backend": config.parsing.mineru_backend,
+            "mineru_effort": config.parsing.mineru_effort,
+            "mineru_lang": config.parsing.mineru_lang,
+            "mineru_formula": config.parsing.mineru_formula,
+            "mineru_table": config.parsing.mineru_table,
+            "mineru_image_analysis": config.parsing.mineru_image_analysis,
+            "mineru_retry_high": config.parsing.mineru_retry_high,
+            "pdf_quality_threshold": config.parsing.pdf_quality_threshold,
+            "formula_recognition_enabled": config.parsing.formula_recognition_enabled,
+            "formula_recognition_device": config.parsing.formula_recognition_device,
+            "formula_recognition_model": config.parsing.formula_recognition_model,
+            "formula_recognition_enable_mkldnn": (
+                config.parsing.formula_recognition_enable_mkldnn
+            ),
+            "markpdfdown_enabled": config.parsing.markpdfdown_enabled,
+            "markpdfdown_cmd": config.parsing.markpdfdown_cmd,
+            "markpdfdown_args": config.parsing.markpdfdown_args,
+            "markpdfdown_timeout": config.parsing.markpdfdown_timeout,
             "visual_model": config.parsing.visual_model,
             "visual_base_url": config.parsing.visual_base_url,
             "visual_timeout": config.parsing.visual_timeout,
@@ -188,8 +208,8 @@ def _patch_to_env(body: ConfigUpdateRequest) -> tuple[dict[str, str], list[str]]
             updates["PDF_OCR_LANGUAGE"] = p["pdf_ocr_language"].strip()
         if "pdf_parser" in p:
             parser = str(p["pdf_parser"]).strip().lower()
-            if parser not in ("auto", "pymupdf", "mineru"):
-                raise BadRequestException("pdf_parser 可选 auto / pymupdf / mineru")
+            if parser not in ("auto", "pymupdf", "mineru", "markpdfdown"):
+                raise BadRequestException("pdf_parser 可选 auto / pymupdf / mineru / markpdfdown")
             updates["PDF_PARSER"] = parser
         if "mineru_cmd" in p:
             cmd = str(p["mineru_cmd"]).strip()
@@ -200,6 +220,61 @@ def _patch_to_env(body: ConfigUpdateRequest) -> tuple[dict[str, str], list[str]]
             if p["mineru_timeout"] < 0:
                 raise BadRequestException("mineru_timeout 不能为负")
             updates["MINERU_TIMEOUT"] = str(p["mineru_timeout"])
+        if "mineru_backend" in p:
+            backend = str(p["mineru_backend"]).strip()
+            if not backend:
+                raise BadRequestException("mineru_backend 不能为空")
+            updates["MINERU_BACKEND"] = backend
+        if "mineru_effort" in p:
+            updates["MINERU_EFFORT"] = p["mineru_effort"]
+        if "mineru_lang" in p:
+            lang = str(p["mineru_lang"]).strip()
+            if not lang:
+                raise BadRequestException("mineru_lang 不能为空")
+            updates["MINERU_LANG"] = lang
+        for field, env_name in (
+            ("mineru_formula", "MINERU_FORMULA"),
+            ("mineru_table", "MINERU_TABLE"),
+            ("mineru_image_analysis", "MINERU_IMAGE_ANALYSIS"),
+            ("mineru_retry_high", "MINERU_RETRY_HIGH"),
+            ("markpdfdown_enabled", "MARKPDFDOWN_ENABLED"),
+        ):
+            if field in p:
+                updates[env_name] = "true" if p[field] else "false"
+        if "pdf_quality_threshold" in p:
+            updates["PDF_QUALITY_THRESHOLD"] = str(p["pdf_quality_threshold"])
+        if "formula_recognition_enabled" in p:
+            updates["FORMULA_RECOGNITION_ENABLED"] = (
+                "true" if p["formula_recognition_enabled"] else "false"
+            )
+        if "formula_recognition_device" in p:
+            device = str(p["formula_recognition_device"]).strip().lower()
+            if device not in ("auto", "cpu", "gpu"):
+                raise BadRequestException("formula_recognition_device 仅支持 auto、cpu 或 gpu")
+            updates["FORMULA_RECOGNITION_DEVICE"] = device
+        if "formula_recognition_model" in p:
+            model = str(p["formula_recognition_model"]).strip()
+            if not model:
+                raise BadRequestException("formula_recognition_model 不能为空")
+            updates["FORMULA_RECOGNITION_MODEL"] = model
+        if "formula_recognition_enable_mkldnn" in p:
+            updates["FORMULA_RECOGNITION_ENABLE_MKLDNN"] = (
+                "true" if p["formula_recognition_enable_mkldnn"] else "false"
+            )
+        if "markpdfdown_cmd" in p:
+            updates["MARKPDFDOWN_CMD"] = str(p["markpdfdown_cmd"]).strip()
+        if "markpdfdown_args" in p:
+            args = str(p["markpdfdown_args"]).strip()
+            if args and (
+                "{input}" not in args
+                or ("{output}" not in args and "{output_file}" not in args)
+            ):
+                raise BadRequestException(
+                    "markpdfdown_args 必须包含 {input} 与 {output}/{output_file} 占位符"
+                )
+            updates["MARKPDFDOWN_ARGS"] = args
+        if "markpdfdown_timeout" in p:
+            updates["MARKPDFDOWN_TIMEOUT"] = str(p["markpdfdown_timeout"])
         if "visual_model" in p:
             updates["VISUAL_MODEL"] = p["visual_model"].strip()
         if "visual_base_url" in p:

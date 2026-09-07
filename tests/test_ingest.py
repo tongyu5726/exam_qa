@@ -43,6 +43,12 @@ class TestSplitText:
         assert len(chunks) >= 2
         assert chunks[0][-20:] in chunks[1]
 
+    def test_latex_delimiters_are_not_split(self):
+        text = r"说明。\[\lim_{n\to\infty} a_n = 1\]结论。"
+        chunks = _split_text(text, chunk_size=8, chunk_overlap=0)
+        assert "".join(chunks) == text
+        assert sum(r"\[\lim_{n\to\infty} a_n = 1\]" in chunk for chunk in chunks) == 1
+
 
 class TestChunkStructured:
     """MinerU 结构化分块：层级保留、表格独立、metadata 丰富。"""
@@ -50,12 +56,13 @@ class TestChunkStructured:
     def _parsed(self):
         blocks = [
             ParsedBlock(block_type="header", text="信号与系统", page=1),
-            ParsedBlock(block_type="title", text="第一章 绪论", page=1, level=1),
-            ParsedBlock(block_type="title", text="1.1 通信系统模型", page=1, level=2),
+            ParsedBlock(block_type="title", text="第一章 绪论", page=1, level=1, bbox=(10, 10, 200, 30)),
+            ParsedBlock(block_type="title", text="1.1 通信系统模型", page=1, level=2, bbox=(10, 40, 200, 60)),
             ParsedBlock(
                 block_type="text",
                 text="通信系统由信源、信道和信宿组成。信源产生消息。",
                 page=1,
+                bbox=(10, 70, 500, 150),
             ),
             ParsedBlock(
                 block_type="table",
@@ -65,6 +72,7 @@ class TestChunkStructured:
                     "<table><tr><th>名称</th><th>说明</th></tr>"
                     "<tr><td>信源</td><td>信息发起点</td></tr></table>"
                 ),
+                bbox=(20, 30, 520, 200),
             ),
             ParsedBlock(
                 block_type="image",
@@ -87,6 +95,7 @@ class TestChunkStructured:
         assert "§ 1.1 通信系统模型" in text_chunk["text"]
         assert text_chunk["block_type"] == "text"
         assert "信源、信道和信宿" in text_chunk["text"]
+        assert text_chunk["bbox"] == "10.00,40.00,500.00,150.00"
 
     def test_table_standalone_with_headers(self):
         chunks = _chunk_structured(
@@ -97,6 +106,7 @@ class TestChunkStructured:
         assert "信源" in table_chunk["text"]
         assert table_chunk["page"] == 2
         assert table_chunk["chapter"] == "1.1 通信系统模型"
+        assert table_chunk["bbox"] == "20.00,30.00,520.00,200.00"
 
     def test_image_without_summary_falls_back_to_caption(self):
         chunks = _chunk_structured(
@@ -110,6 +120,71 @@ class TestChunkStructured:
             self._parsed(), chunk_size=200, chunk_overlap=20
         )
         assert all("信号与系统" not in c["text"] for c in chunks)
+
+    def test_formula_is_standalone_with_section_and_nearby_chinese_context(self):
+        parsed = ParsedDocument(
+            pages=[],
+            blocks=[
+                ParsedBlock(block_type="title", text="5.1.3 折射率与载流子浓度的关系", page=5, level=2),
+                ParsedBlock(
+                    block_type="text",
+                    text="折射率与介电常数的关系可表示为：",
+                    page=5,
+                ),
+                ParsedBlock(
+                    block_type="formula",
+                    text=r"$$n\approx\sqrt{\varepsilon_r}$$",
+                    latex=r"n\approx\sqrt{\varepsilon_r}",
+                    page=5,
+                ),
+            ],
+        )
+
+        chunks = _chunk_structured(parsed, chunk_size=200, chunk_overlap=0)
+
+        formula = next(c for c in chunks if c["block_type"] == "formula")
+        body = next(c for c in chunks if c["block_type"] == "text")
+        assert formula["section_path"] == "5.1.3 折射率与载流子浓度的关系"
+        assert "折射率与介电常数的关系可表示为" in formula["context"]
+        assert "公式上下文：" in formula["text"]
+        assert r"$$n\approx\sqrt{\varepsilon_r}$$" in formula["text"]
+        assert r"n\approx\sqrt{\varepsilon_r}" not in body["text"]
+
+    def test_formula_infers_numbered_section_from_fallback_page_text(self):
+        parsed = ParsedDocument(
+            pages=[],
+            blocks=[
+                ParsedBlock(
+                    block_type="text",
+                    text="## 5.1.3 折射率与载流子浓度的关系\n折射率与介电常数的关系可表示为：",
+                    page=5,
+                ),
+                ParsedBlock(block_type="formula", text=r"$$\varepsilon_r=n^2$$", page=5),
+            ],
+        )
+
+        chunks = _chunk_structured(parsed, chunk_size=300, chunk_overlap=0)
+
+        formula = next(c for c in chunks if c["block_type"] == "formula")
+        assert formula["section_path"] == "5.1.3 折射率与载流子浓度的关系"
+        assert "折射率与介电常数的关系可表示为" in formula["context"]
+
+    def test_annotation_reference_kept_but_ui_noise_skipped(self):
+        parsed = ParsedDocument(
+            pages=[],
+            blocks=[
+                ParsedBlock(block_type="text", text="P28 Ex2", page=1, textbook_references=("P28 Ex2",), content_role="reference"),
+                ParsedBlock(block_type="text", text="考点：夹逼准则", page=1, content_role="annotation"),
+                ParsedBlock(block_type="text", text="10:29", page=1, content_role="noise"),
+            ],
+        )
+        chunks = _chunk_structured(parsed, chunk_size=200, chunk_overlap=0)
+        reference = next(c for c in chunks if c["content_role"] == "reference")
+        annotation = next(c for c in chunks if c["content_role"] == "annotation")
+
+        assert reference["textbook_references"] == "P28 Ex2"
+        assert annotation["text"] == "考点：夹逼准则"
+        assert all("10:29" not in c["text"] for c in chunks)
 
 
 class TestScanAndChapter:

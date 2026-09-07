@@ -1,6 +1,6 @@
 """离线检索评估入口：打印按 course_id 的 Recall@K / MRR。
 
-  uv run python -m tests.eval.run_retrieval_eval --chroma ./storage/chroma
+  uv run --no-sync python -m tests.eval.run_retrieval_eval --chroma ./storage/chroma
 """
 
 from __future__ import annotations

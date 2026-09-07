@@ -15,6 +15,9 @@ class LLMClient(Protocol):
     def chat(self, messages: list[dict], **kwargs) -> str:
         ...
 
+    def chat_stream(self, messages: list[dict], **kwargs):
+        ...
+
     def chat_with_tools(self, messages: list[dict], tools: list[dict], **kwargs) -> dict:
         ...
 
@@ -69,15 +72,33 @@ class OpenAIClient:
                 temperature=kwargs.get("temperature", self._temperature),
                 max_tokens=kwargs.get("max_tokens", self._max_tokens),
             )
-            return resp.choices[0].message.content or ""
+            message = resp.choices[0].message
+            content = message.content or ""
+            if not content:
+                reasoning_chars = len(getattr(message, "reasoning_content", "") or "")
+                logger.warning(
+                    "LLM 返回空正文: model=%s finish_reason=%s reasoning_chars=%d",
+                    self._model,
+                    resp.choices[0].finish_reason,
+                    reasoning_chars,
+                )
+                raise LLMAPIException(
+                    "模型完成了推理，但没有返回可显示的答案。请重试，或提高 LLM_MAX_TOKENS。"
+                )
+            return content
         except Exception as e:
             self._raise_mapped(e)
 
     def chat_stream(self, messages: list[dict], **kwargs):
-        """流式对话，逐块 yield 文本 delta。"""
+        """流式对话。
+
+        默认保持兼容，只 yield 正文字符串。传入 ``emit_status=True`` 后，返回
+        ``content`` / ``status`` 事件；推理内容本身不向前端暴露，只报告状态。
+        """
         if self._client is None:
             raise LLMAPIException("AI 服务未配置：请设置 LLM_API_KEY")
         try:
+            emit_status = bool(kwargs.get("emit_status", False))
             stream = self._client.chat.completions.create(
                 model=self._model,
                 messages=messages,
@@ -85,10 +106,46 @@ class OpenAIClient:
                 max_tokens=kwargs.get("max_tokens", self._max_tokens),
                 stream=True,
             )
+            content_chars = 0
+            reasoning_chars = 0
+            reasoning_status_sent = False
+            finish_reason = None
             for chunk in stream:
-                delta = chunk.choices[0].delta.content
-                if delta:
-                    yield delta
+                if not chunk.choices:
+                    continue
+                choice = chunk.choices[0]
+                finish_reason = choice.finish_reason or finish_reason
+                delta = choice.delta
+                reasoning = getattr(delta, "reasoning_content", "") or ""
+                if reasoning:
+                    reasoning_chars += len(reasoning)
+                    if emit_status and not reasoning_status_sent:
+                        reasoning_status_sent = True
+                        yield {"type": "status", "status": "reasoning"}
+                content = delta.content or ""
+                if content:
+                    content_chars += len(content)
+                    if emit_status:
+                        yield {"type": "content", "text": content}
+                    else:
+                        yield content
+            if content_chars == 0:
+                logger.warning(
+                    "LLM 流式返回空正文: model=%s finish_reason=%s reasoning_chars=%d",
+                    self._model,
+                    finish_reason,
+                    reasoning_chars,
+                )
+                raise LLMAPIException(
+                    "模型完成了推理，但没有返回可显示的答案。请重试，或提高 LLM_MAX_TOKENS。"
+                )
+            logger.info(
+                "LLM 流式生成完成: model=%s finish_reason=%s content_chars=%d reasoning_chars=%d",
+                self._model,
+                finish_reason,
+                content_chars,
+                reasoning_chars,
+            )
         except Exception as e:
             self._raise_mapped(e)
 

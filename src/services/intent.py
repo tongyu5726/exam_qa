@@ -12,7 +12,9 @@ from src.services.evidence_metadata import normalize_scope
 from src.services.llm import LLMClient
 
 IntentLayer = Literal["rule", "context", "llm_fallback", "default"]
-IntentTask = Literal["qa", "concept", "chapter", "rule_query", "version_compare"]
+IntentTask = Literal[
+    "qa", "concept", "chapter", "rule_query", "version_compare", "question_generate"
+]
 
 _DATE = re.compile(r"(20\d{2})[年./-](\d{1,2})[月./-](\d{1,2})日?")
 _CHAPTER = re.compile(r"第\s*[0-9一二三四五六七八九十]+\s*章")
@@ -26,6 +28,13 @@ _CONTEXTUAL = re.compile(r"(?:那|这个|刚才|上面|前者|后者|同样|按�
 _COMPARE = re.compile(r"(?:新旧|两个|不同).{0,8}(?:版本|版).{0,8}(?:对比|区别|差异)|(?:版本|版).{0,8}(?:对比|区别|差异)")
 _RULE_QUERY = re.compile(r"(?:是否|能不能|可不可以|可以吗|规定|要求|适用|生效|失效|现行|最新版|最新)")
 _CONCEPT = re.compile(r"(?:是什么|定义|原理|公式|推导|性质|含义)")
+_QUESTION_GENERATE = re.compile(
+    r"(?:(?:给我|帮我|请)(?:出|生成|创建|来|命制|组|做成)|"
+    r"(?:给我|帮我)(?:几|[一二三四五六七八九十\d]+)(?:个|道|份)?|"
+    r"(?:出|生成|创建|来|命制|组|做成))"
+    r"(?:几|[一二三四五六七八九十\d]+)?(?:个|道|份)?[^，。！？]{0,24}"
+    r"(?:题目|试题|大题|小题|选择题|填空题|简答题|试卷|卷子)"
+)
 
 
 @dataclass(frozen=True)
@@ -63,6 +72,15 @@ def _extract_scenario(text: str) -> str | None:
 def _rule_intent(question: str) -> IntentDecision | None:
     scenario = _extract_scenario(question)
     as_of = _extract_date(question)
+    if _QUESTION_GENERATE.search(question):
+        return IntentDecision(
+            task="question_generate",
+            scenario=scenario,
+            as_of=as_of,
+            confidence=0.98,
+            layer="rule",
+            rationale="命中出题或组卷表达，路由到我的题库",
+        )
     if _COMPARE.search(question):
         return IntentDecision(task="version_compare", scenario=scenario, as_of=as_of, confidence=0.97, layer="rule", rationale="命中版本对比表达")
     if _CHAPTER.search(question) or "章节概览" in question or "本章概述" in question:
@@ -80,7 +98,7 @@ def _context_intent(question: str, previous: dict | None) -> IntentDecision | No
     if not previous or not _CONTEXTUAL.search(question):
         return None
     previous_mode = previous.get("mode") if previous.get("mode") in {"qa", "concept", "chapter"} else "qa"
-    previous_task = previous.get("task") if previous.get("task") in {"qa", "concept", "chapter", "rule_query", "version_compare"} else "qa"
+    previous_task = previous.get("task") if previous.get("task") in {"qa", "concept", "chapter", "rule_query", "version_compare", "question_generate"} else "qa"
     return IntentDecision(task=previous_task, mode=previous_mode, scenario=previous.get("scenario") or None, as_of=previous.get("as_of") or None, confidence=0.76, layer="context", rationale="根据会话中最近已确认的意图继承范围")
 
 
@@ -90,7 +108,7 @@ def _llm_intent(question: str, previous: dict | None, llm: LLMClient | None) -> 
         return None
     prompt = {
         "question": question, "previous_intent": previous or {},
-        "allowed_tasks": ["qa", "concept", "chapter", "rule_query", "version_compare"],
+        "allowed_tasks": ["qa", "concept", "chapter", "rule_query", "version_compare", "question_generate"],
         "allowed_modes": ["qa", "concept", "chapter"],
         "instruction": "仅返回 JSON：task, mode, scenario, as_of, confidence。scenario 为空或受控中文键；as_of 为 YYYY-MM-DD 或空。",
     }
@@ -103,7 +121,7 @@ def _llm_intent(question: str, previous: dict | None, llm: LLMClient | None) -> 
     except Exception:
         return None
     task, mode = data.get("task"), data.get("mode")
-    if task not in {"qa", "concept", "chapter", "rule_query", "version_compare"} or mode not in {"qa", "concept", "chapter"}:
+    if task not in {"qa", "concept", "chapter", "rule_query", "version_compare", "question_generate"} or mode not in {"qa", "concept", "chapter"}:
         return None
     as_of = data.get("as_of") or None
     if as_of:

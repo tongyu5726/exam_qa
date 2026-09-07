@@ -1,8 +1,8 @@
 # 05 Web UI 规划
 
-> **状态（2026-07）**：已定稿并随 P2-A 同步。废弃 React/Vite `workbench/`；手写 HTML/CSS/JS，三挂载点 `/sz`（对话）、`/sz-docs`（资料）、`/sz-cfg`（设置）。  
-> 产品：溯知（exam-rag）· 据源而答的课程资料问答  
-> **关联**：[01-产品边界](./01-产品边界.md) · [02-模块架构](./02-模块架构.md) · [03-工程规范](./03-工程规范.md) · [04-后续演进规范](./04-后续演进规范.md)  
+> **状态（2026-07）**：已定稿并随 P2-A 同步。废弃 React/Vite `workbench/`；手写 HTML/CSS/JS，四个页面入口 `/sz`（对话）、`/sz-docs`（资料）、`/sz-cfg`（设置）、`/sz-bank`（题库）。
+> 产品：溯知（exam-rag）· 据源而答的课程资料问答
+> **关联**：[01-产品边界](./01-产品边界.md) · [02-模块架构](./02-模块架构.md) · [03-工程规范](./03-工程规范.md) · [04-后续演进规范](./04-后续演进规范.md)
 > **本轮 UI 契约**：`mode=chapter` · 资料「强制重建」· 设置页 BGE 精排开关
 
 ---
@@ -22,7 +22,7 @@
 
 | 项 | 决策 |
 |---|---|
-| 字体 | IBM Plex Sans + Noto Sans SC |
+| 字体 | LXGW WenKai + Nunito（本地字体） |
 | 强调色 | 亮色 `#2a9d8f` / 暗色 `#4ecdc4` |
 | 主题 | **默认跟随系统**（`prefers-color-scheme`）；可手动覆盖；写入 `localStorage` 键 `sz.theme`（`system` \| `light` \| `dark`） |
 | 圆角 | sm / md / lg ≈ `6 / 8 / 12px` |
@@ -36,6 +36,7 @@
 | `/sz/` | `www/sz/` | 对话：顶栏 + 左会话历史 + 右问答 |
 | `/sz-docs/` | `www/sz-docs/` | 资料：上传 / 扫描 / 列表 / 删除 |
 | `/sz-cfg/` | `www/sz-cfg/` | 设置：顶栏 + 左配置分组 + 右表单 |
+| `/sz-bank/` | `www/sz-bank/` | 题库：基于证据出题、保存与组卷 |
 | `/` | — | 有前端时重定向到 `/sz/`；否则 `/docs` |
 
 小屏（`≤768px`）：对话页双栏改为上下堆叠；设置页左列表置顶可滚，主表单在下；顶栏链接可收进「⋯」。
@@ -48,13 +49,14 @@
 
 - [x] **手写** HTML / CSS / JS（ES modules），**无** React、Vite、pnpm、TypeScript、UI 组件库
 - [x] **工程形态** 按挂载应用分子目录，CSS/JS 分文件，浏览器直载，无前端构建
-- [x] **两个独立挂载点**（不是同一 mount 下的两个 html）
+- [x] **独立页面挂载点与共享静态资源挂载点**
 
 | 挂载前缀 | 静态目录 | 说明 |
 |---|---|---|
 | `/sz` | `www/sz/` | 对话 |
 | `/sz-docs` | `www/sz-docs/` | 资料 |
 | `/sz-cfg` | `www/sz-cfg/` | 设置 |
+| `/sz-bank` | `www/sz-bank/` | 题库 |
 | `/shared` | `www/shared/` | 共享 tokens、api、theme、shell、KaTeX。**必须单独 mount**：`StaticFiles` 不能从 `/sz` 挂载点越界提供 `../shared`，浏览器把相对路径解析成 `/shared/...` |
 
 ### 2.2 与后端集成
@@ -67,13 +69,13 @@
 | 健康 | `GET /api/v1/health` → 顶栏状态点 |
 | 目录 | `GET /api/v1/colleges`、`GET /api/v1/courses`；`course_id` 必填并持久化 `sz.course_id` |
 | 资料 | `POST/GET/DELETE /api/v1/documents`、`POST /api/v1/documents/scan`（Form：`course_id`；可选 `force=true`） |
-| 问答 | `POST /api/v1/ask`（`mode=qa|concept|chapter`；`stream=true` → SSE）；展示 citations、KaTeX（拒答看 `grounded`） |
+| 问答 | `POST /api/v1/ask`（`mode=auto|qa|concept|chapter`；`stream=true` → SSE）；展示 citations、KaTeX（拒答看 `grounded`） |
 | 配置 | `GET/PATCH /api/v1/config`（含检索精排字段）；LLM 注册/切换：`/api/v1/llm-providers` |
 
 ### 2.3 启动
 
 ```bash
-uv run exam
+uv run --no-sync exam
 # 浏览器：http://127.0.0.1:8787/sz/
 # 资料：  http://127.0.0.1:8787/sz-docs/
 # 设置：  http://127.0.0.1:8787/sz-cfg/
@@ -268,7 +270,7 @@ exam/
 ```
 - [x] GET / → 302/重定向到 /sz/
 - [x] /sz/ · /sz-docs/ · /sz-cfg/ 顶栏互链；主题跟随系统且可覆盖
-- [x] 对话页：新对话 / 历史切换 / 删除；`mode=qa|concept|chapter`；问答 SSE + citations + KaTeX
+- [x] 对话页：新对话 / 历史切换 / 删除；`mode=auto|qa|concept|chapter`；问答 SSE + citations + KaTeX
 - [x] 资料页：选课 → 上传（含 PPTX）→ 列表 → 扫描；「强制重建」带确认并传 force
 - [x] grounded: false 拒答态（样式提示即可，无「有据可查」徽章）
 - [x] /sz-cfg/ 各组保存成功（含精排开关）；密钥不回明文；env 不可写时有提示

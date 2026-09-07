@@ -232,6 +232,7 @@ async function refreshDocs() {
     box.innerHTML = items
       .map((d) => {
         const status = d.status || "";
+        const sourceUrl = `/api/v1/documents/${encodeURIComponent(String(d.id))}/source?course_id=${encodeURIComponent(courseId)}`;
         const dimTag =
           status === "done" && storedDim != null
             ? `<span class="sz-doc-tag" data-kind="dim">入库维度 ${storedDim}</span>`
@@ -251,7 +252,10 @@ async function refreshDocs() {
               ${dimTag}
             </div>
           </div>
-          <button type="button" class="sz-doc-del" data-del="${d.id}">删除</button>
+          <div class="sz-doc-card-actions">
+            <a class="sz-doc-open" href="${sourceUrl}" target="_blank" rel="noopener" title="在新窗口查看源文档">查看源文档</a>
+            <button type="button" class="sz-doc-del" data-del="${d.id}">删除</button>
+          </div>
         </article>`;
       })
       .join("");

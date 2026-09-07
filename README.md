@@ -18,6 +18,8 @@
 
 本地跑起来的课程资料问答：入库 → 按课隔离检索 → 带引用作答。前端在 `www/`（手写 HTML/CSS/JS，无构建），后端是 FastAPI + Chroma + SQLite。
 
+**使用边界：**默认仅监听 `127.0.0.1`。目前没有用户登录或访问鉴权，`course_id` 只用于课程数据隔离；请勿直接暴露到公网或不可信网络。配置远程 LLM / Embedding / 视觉服务后，相应问题、检索片段、待向量化文本或图片会发送给你选择的服务商；使用前确认资料允许这样处理。
+
 | 能力 | 说明 |
 |:-----|:-----|
 | 自由问答 | `mode=qa`，混合检索（向量 + BM25 → RRF；可选 BGE 精排） |
@@ -25,20 +27,44 @@
 | 章节概览 | `mode=chapter`，按 `chapter` 元数据聚合（不走语义检索） |
 | 拒答 | 最高分低于阈值 → `grounded: false`，固定文案，禁止无引用硬编 |
 | 多课隔离 | 一切检索 / 上传 / 删除都带 `course_id` |
-| 资料格式 | PDF · TXT · MD · DOC · DOCX · PPTX；PDF 支持 MinerU 结构解析与 OCR 回退 |
+| 资料格式 | PDF · TXT · MD · DOC · DOCX · PPTX；PDF 支持质量评估、MinerU 高精度重试、可选外部增强与 OCR 回退 |
 | PDF 自动更新 | 哈希去重 + 文件名/内容匹配；新版影子入库成功后再切换 |
 | 证据治理 | 自动抽取版本/生效期/权威候选；人工固定场景后按场景、时效、权威筛选并解释引用 |
 | 意图路由 | 三层漏斗：规则直达 → 会话状态继承 → 受约束 LLM 兜底；不会将全部请求交给模型 |
 
 ## Quick Start
 
-需要 Python ≥ 3.11、[uv](https://docs.astral.sh/uv/)，以及 OpenAI 兼容的对话 API（`LLM_API_KEY`）。PDF 默认尝试 MinerU 结构解析；未安装或执行失败时会回退到 PyMuPDF 链路，因此不阻塞基本使用。扫描版 PDF 的回退 OCR 可选 [Tesseract](https://github.com/tesseract-ocr/tesseract)（`eng` / `chi_sim`）；旧版 `.doc` 需 [LibreOffice](https://www.libreoffice.org/) 或本机 Microsoft Word。
+需要 Python 3.11–3.13（默认 3.11）和 [uv](https://docs.astral.sh/uv/)。进入下载并解压后的项目根目录，再执行下面的命令。启动页面不需要 API Key；生成答案前需配置 OpenAI 兼容的对话 API。PDF 默认尝试可选的 MinerU，不可用时回退到内置 PyMuPDF；扫描版 PDF 的 OCR 需安装 [Tesseract](https://github.com/tesseract-ocr/tesseract) 及 `eng` / `chi_sim` 语言包。旧版 `.doc` 需 [LibreOffice](https://www.libreoffice.org/) 或 Windows 本机 Microsoft Word。
+
+当前锁文件的主要目标平台为 Windows x64、Linux x64（glibc ≥ 2.28）和 Apple Silicon macOS ≥ 14。旧 macOS、Intel Mac、32 位系统及其他架构不保证可直接使用此锁文件；需另行选择兼容的 Torch 和依赖版本。已实测 Windows Python 3.11 的全新 CPU 安装、启动与单元测试；Linux/macOS 仅检查了依赖安装计划，尚未在这些系统上执行运行测试。
 
 ```bash
-cp .env.example .env   # 填写 LLM_API_KEY，或启动后在设置页注册模型
-uv sync
-uv run exam            # → http://127.0.0.1:8787
+uv sync --locked       # 仅首次安装或主动更新环境时执行
+uv run --no-sync exam  # → http://127.0.0.1:8787
 ```
+
+首次启动会在 `.env` 不存在时从模板创建，不会覆盖已有 `.env`。在设置页注册并选择 LLM；本地 Embedding 首次使用需联网下载模型，也可将 `EMBEDDING_MODEL` 设置为已下载的模型目录。无网络且无模型缓存时，需先提供本地模型或配置远程 Embedding API。
+
+Windows 已有 `.venv` 时可直接执行 `./start.ps1`。它只调用现有 Python，不安装、卸载或同步任何依赖。也可在 PowerShell 中运行 `& .\.venv\Scripts\python.exe -m src.main`。
+
+### CPU / GPU 与已有环境
+
+`EMBEDDING_DEVICE=auto`、`RERANK_DEVICE=auto` 会按当前 Torch 运行时选择 CUDA、Apple MPS 或 CPU；未安装 GPU 版 Torch、驱动不可用或指定 GPU 编号不存在时回退 CPU。GPU 模型加载或推理发生显存不足等运行时错误时，会在 CPU 上重试一次。日志会记录设备选择与回退原因；下载失败仍需修复网络或模型路径。
+
+可在 `.env` 分别指定 `cpu`、`cuda`、`cuda:0` 或 `mps`，修改后重启。设备切换保持模型不变，不要求重建向量库。**修改 `EMBEDDING_MODEL` 则应重新入库**，不同模型的向量不可混用。
+
+默认依赖使用 PyPI，不再强制 Windows CUDA 安装源，也不依赖相邻目录。需要 GPU 的新用户应先按 [PyTorch 官方安装选择器](https://pytorch.org/get-started/locally/) 匹配系统与驱动安装对应构建。程序检测设备不会自动下载或更换 Torch。
+
+**已经安装 GPU Torch / Paddle 或本地 MarkPDFdown 的用户：日常使用 `uv run --no-sync exam` 或 `./start.ps1`。不要为启动服务再执行 `uv sync` 或普通 `uv run exam`，它们可能按发布依赖锁替换定制包，并移除未声明的本地包。** 需要尝试发布版安装时另建目录/虚拟环境。有关同步行为见 [uv 官方说明](https://docs.astral.sh/uv/concepts/projects/sync/)。
+
+### 可选 PDF 增强
+
+基础安装不包含 PaddleOCR、PaddlePaddle、MinerU 和 MarkPDFdown；未启用这些工具时可直接使用基础文本解析。
+
+- **公式识别（CPU）**：在新环境执行 `uv sync --locked --extra formula`，再设 `FORMULA_RECOGNITION_ENABLED=true`。该 extra 安装 CPU Paddle。已有 Paddle GPU 环境不要同步这个 extra；继续使用现有安装并用 `--no-sync` 启动。
+- **公式识别设备**：`FORMULA_RECOGNITION_DEVICE=auto` 按 Paddle 自身能力选择 GPU / CPU，也可指定 `cpu`、`gpu`、`gpu:0`。Torch 能使用 GPU 不代表 Paddle 也能；Windows 自动/GPU 路径在独立进程执行，隔离两套 CUDA/cuDNN。Paddle GPU 安装参照 [PaddlePaddle 官方说明](https://www.paddlepaddle.org.cn/install/quick)。
+- **MarkPDFdown**：按 [官方仓库](https://github.com/MarkPDFdown/markpdfdown) 单独安装并配置多模态凭据，将命令放入 PATH 或填写 `MARKPDFDOWN_CMD` 绝对路径；主项目无需 `../MarkPDFdown`。启用参数见下文。
+- **MinerU / OCR / DOC 转换**：需按各工具要求单独安装。缺少增强解析器时仍会尝试内置回退；纯扫描件若没有可用 OCR 工具，无法保证提取正文。
 
 | 地址 | 用途 |
 |:-----|:-----|
@@ -54,12 +80,12 @@ uv run exam            # → http://127.0.0.1:8787
 
 | 命令 | 说明 |
 |:-----|:-----|
-| `uv sync` | 安装依赖 |
-| `uv run exam` | 启动服务（默认 `8787`） |
-| `DEBUG=true uv run exam` | 调试模式 |
-| `uv run pytest -q` | 单元测试 |
-| `uv run pytest -q -m integration` | 集成测试（需 Embedding 与 LLM） |
-| `uv run python -m tests.eval.run_retrieval_eval --chroma ./storage/chroma` | 离线 Recall@K / MRR |
+| `uv sync --locked` | 首次安装基础依赖（会同步环境） |
+| `uv run --no-sync exam` | 使用已有环境启动服务（默认 `8787`） |
+| `DEBUG=true uv run --no-sync exam` | Bash 调试模式；PowerShell 请设置 `$env:DEBUG='true'` |
+| `uv run --no-sync pytest -q` | 单元测试，隔离配置与存储 |
+| `uv run --no-sync pytest -q -m integration` | 集成测试；通过进程环境变量显式提供 Embedding / LLM 配置 |
+| `uv run --no-sync python -m tests.eval.run_retrieval_eval --chroma ./storage/chroma` | 离线 Recall@K / MRR |
 | `uv add <package>` | 添加依赖 |
 
 ```bash
@@ -169,13 +195,27 @@ exam-rag/
 | 分组 | 关键变量 |
 |:-----|:---------|
 | LLM | `LLM_PROVIDER` · `LLM_API_KEY` · `LLM_BASE_URL` · `LLM_MODEL` |
-| Embedding | `EMBEDDING_PROVIDER`（`local` / `openai`）· `EMBEDDING_MODEL` |
-| 存储 | `CHROMA_PATH` · `SQLITE_PATH` · `KNOWLEDGE_DIR` · `MAX_UPLOAD_MB` |
-| PDF | `PDF_PARSER` · `MINERU_CMD` · `MINERU_TIMEOUT` · `PDF_USE_OCR` · `PDF_FORCE_OCR` · `PDF_OCR_LANGUAGE` |
+| Embedding | `EMBEDDING_PROVIDER`（`local` / `openai`）· `EMBEDDING_MODEL` · `EMBEDDING_DEVICE` |
+| 精排设备 | `RERANK_DEVICE`（`auto` / `cpu` / `cuda` / `cuda:N` / `mps`） |
+| 存储 | `CHROMA_PATH` · `SQLITE_PATH` · `KNOWLEDGE_DIR` · `PARSED_ASSETS_DIR` · `MAX_UPLOAD_MB` |
+| PDF | `PDF_PARSER` · `MINERU_*` · `PDF_QUALITY_THRESHOLD` · `MARKPDFDOWN_*` · `PDF_USE_OCR` · `PDF_FORCE_OCR` · `PDF_OCR_LANGUAGE` |
 | 视觉摘要（可选） | `VISUAL_MODEL` · `VISUAL_BASE_URL` · `VISUAL_API_KEY` · `VISUAL_TIMEOUT` |
 | 代理 | `PROXY_URL` · `PROXY_ENABLED` · `NO_PROXY` |
 
 可注册多个 LLM（OpenAI 兼容 / Ollama），「设为当前」后会写回 `.env`。
+
+<details>
+<summary>PDF 高精度解析与 MarkPDFdown 适配</summary>
+
+默认链路为 MinerU `hybrid-engine` + `medium`，保留标题、表格、公式和图片结构。系统为每个候选结果计算 0～1 的质量分数（文本密度、页覆盖率、结构还原）；低于 `PDF_QUALITY_THRESHOLD` 时，会在 `MINERU_RETRY_HIGH=true` 下以 `--effort high` 重跑，并仅在结果更好时替换。随后仍会保留 PyMuPDF、OCR、Fitz 回退链，避免单个工具异常导致资料无法入库。
+
+`MARKPDFDOWN_ENABLED=false` 是默认安全状态。已核验 MarkPDFdown 1.1.2 的文件模式为 `markpdfdown --input <PDF> --output <Markdown 文件>`；启用时可设置 `MARKPDFDOWN_CMD=markpdfdown` 和 `MARKPDFDOWN_ARGS=--input "{input}" --output "{output_file}"`。适配器也支持目录型 CLI 的 `{output}` 占位符；`{input}` 为 PDF 绝对路径，`{output_file}` 为临时 Markdown 文件。MarkPDFdown 需可用的多模态模型和 LiteLLM 凭据；无有效输出时自动回退内置链路。
+
+当前环境若未安装 Tesseract，PyMuPDF 的扫描件 OCR 后备无法实际运行；此时优先使用 MinerU 的 `high`，或安装 Tesseract 及 `eng`、`chi_sim` 语言包后再启用 OCR 回退。
+
+对于手写批注、公式与截图型讲义，解析结果会将 **PDF 物理页**、PDF 自定义页签和识别出的教材引用（如 `P28 Ex2`）分开写入 metadata；“考点/注意”等批注单独保留为可检索证据，页眉页脚、手机状态栏、邮箱/网址等明确噪声不入库。MinerU / MarkPDFdown 导出的图片会复制到 `PARSED_ASSETS_DIR`，因此配置视觉模型后，入库时可实际读取这些裁剪图生成摘要，而不是引用已清理的临时文件。公式兼容 `latex`、`math_content` 和 `equation` 等字段，统一保存为 LaTeX 分隔格式。
+
+</details>
 
 <details>
 <summary>检索与分块</summary>
@@ -233,7 +273,7 @@ exam-rag/
 
 **证据元数据与择证**：入库会从正文抽取版本号、生效/失效日期及权威层级候选，记录抽取置信度。自然语言「适用范围」不会直接用于过滤，须通过 `PATCH /documents/{doc_id}/evidence?course_id=...` 设为稳定的场景键（如 `考试`、`实验`）。问答传入 `scenario` 和 `as_of`（`YYYY-MM-DD`）后，仅保留该场景或 `all`、且当日有效的证据；其后优先更高权威，再优先较新的生效版本。每条 citation 返回版本、时效、权威、场景和选择原因。
 
-**意图识别**：`mode` 未指定时为 `auto`。规则层毫秒级识别章节、概念、版本/时效和受控场景；指代性追问（如“按刚才那个范围”）从会话中继承上一轮已保存的结构化意图；仅在无可继承状态的模糊指代下调用 LLM，并强制其只返回经过枚举和日期校验的 JSON 计划。实际检索、范围过滤和证据选择始终由后端确定性执行。响应 `data.intent` 可用于观测路由层、置信度与最终检索范围。
+**意图识别**：`mode` 未指定时为 `auto`。规则层识别章节、概念、版本/时效和受控场景；指代性追问（如“按刚才那个范围”）从会话中继承上一轮已保存的结构化意图；仅在无可继承状态的模糊指代下调用 LLM，并强制其只返回经过枚举和日期校验的 JSON 计划。实际检索、范围过滤和证据选择始终由后端确定性执行。响应 `data.intent` 可用于观测路由层、置信度与最终检索范围。
 
 **Agent 多步问答（`/agent/run`）**：默认走 P2-B 固定图 `retrieve → grade → rewrite/generate → refuse`，检索不达标时自动改写查询重试（`max_steps` 默认 3、上限 10）。可传 `scenario`、`as_of` 复用证据范围/时效过滤。`langgraph` 已纳入项目依赖，`uv sync` 即会安装。
 
@@ -314,7 +354,7 @@ POST /api/v1/ask
 | P1-A 学院·课程隔离 | 已实现 |
 | P1-B `mode=concept` · 混合检索 · PPT | 已实现 |
 | P2-A 离线评估 · BGE 精排 · `mode=chapter` | 已实现（精排默认关） |
-| PDF 结构化解析 · 语义切片 · 可选视觉摘要 | 已实现（MinerU 不可用时自动回退） |
+| PDF 高精度解析 · 质量择优 · 结构化切片 · 可选视觉摘要 | 已实现（MinerU medium/high 与内置回退；可配置 MarkPDFdown 适配） |
 | PDF 内容指纹 · 影子入库 · 自动版本切换 | 已实现 |
 | 证据治理 · 三层意图路由 | 已实现 |
 | P2-B Agent（LangGraph 多步循环） | 已实现 |
@@ -331,9 +371,15 @@ POST /api/v1/ask
 | `www/` | 前端源码，随仓库提交 |
 | 新依赖 | `uv add <package>` |
 
-WSL：venv 放 `~/`，别放 `/mnt/`，否则模型加载容易超时。
+WSL 用户建议把项目与虚拟环境放在 Linux 文件系统，减少跨文件系统 I/O；Windows 原生运行不需要 WSL。
+
+测试使用临时 `.env`、资料目录、模型注册表和数据库，不读取或清理开发者的真实资料库；集成测试所需凭据须通过进程环境变量显式提供。默认单元测试不需要模型下载或外部 API。
+
+上传 GitHub 时提交源码、`www/`、测试、文档、`.env.example`、`pyproject.toml` 和 `uv.lock`。`.gitignore` 已排除 `.env`、`.venv`、`data/`、`storage/`、`.tmp/`、本地模型目录及 wheel 安装包。不要把整个本地文件夹压缩后上传，也不要使用 `git add -f` 绕过这些规则。
 
 ## Documentation
+
+随仓库分发的字体和 KaTeX 的来源、版权及许可证见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。这些许可证仅适用于对应第三方资源；自行下载的模型另遵守模型提供方许可。
 
 | 文档 | 内容 |
 |:-----|:-----|

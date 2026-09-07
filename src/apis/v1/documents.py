@@ -1,10 +1,12 @@
 """documents API — 上传 / 列表 / 扫描 / 删除。"""
 
 import os
+import mimetypes
 from datetime import date
 from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, Form, Query, UploadFile
+from fastapi.responses import FileResponse
 from starlette import status
 
 from src.config import config
@@ -155,6 +157,31 @@ async def list_documents(
             },
         },
     }
+
+
+@router.get("/{doc_id}/source")
+async def open_document_source(
+    doc_id: int,
+    course_id: str = Query(...),
+    ds: SQLiteDocStore = Depends(get_doc_store),
+    catalog: CatalogStore = Depends(get_catalog_store),
+    _user=Depends(get_current_user),
+):
+    """以当前课程为边界打开已入库文档的原始文件。"""
+    catalog.require_course(course_id)
+    doc = ds.get(doc_id)
+    if doc is None or doc.get("course_id") != course_id:
+        raise NotFoundException("文档不存在")
+    source = Path(doc["file_path"])
+    if not source.is_file():
+        raise NotFoundException("源文件不存在或已被移动")
+    media_type, _encoding = mimetypes.guess_type(doc.get("filename") or source.name)
+    return FileResponse(
+        source,
+        media_type=media_type,
+        filename=doc.get("filename") or source.name,
+        content_disposition_type="inline",
+    )
 
 
 @router.patch("/{doc_id}/evidence")

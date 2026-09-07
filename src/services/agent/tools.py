@@ -51,6 +51,12 @@ def _citation(hit: dict) -> dict:
         "chapter": meta.get("chapter") or "",
         "section_path": meta.get("section_path") or "",
         "block_type": meta.get("block_type") or "",
+        "bbox": meta.get("bbox") or "",
+        "pdf_page_label": meta.get("pdf_page_label") or "",
+        "textbook_references": meta.get("textbook_references") or "",
+        "content_role": meta.get("content_role") or "content",
+        "parser_name": meta.get("parser_name") or "",
+        "parse_quality": float(meta.get("parse_quality") or 0.0),
         "snippet": (hit.get("text") or "")[:200],
         "score": round(float(hit.get("score") or 0.0), 4),
     }
