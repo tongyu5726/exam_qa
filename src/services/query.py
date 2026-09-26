@@ -1,6 +1,8 @@
 """查询编排：mode 路由 → 检索 / 章节聚合 → 生成 / 拒答。"""
 
 import logging
+import re
+from pathlib import Path
 from datetime import date
 
 from src.config import config
@@ -10,7 +12,7 @@ from src.services.evidence_metadata import evidence_reason
 from src.services.generation import generate, stream_generate
 from src.services.intent import IntentDecision, resolve_intent
 from src.services.llm import OpenAIClient
-from src.services.retrieval import retrieve
+from src.services.retrieval import retrieve, retrieve_visual_evidence
 from src.services.storage.conversation_store import ConversationStore
 from src.services.storage.vector_store import ChromaVectorStore
 
@@ -23,6 +25,11 @@ _REFUSAL = "资料库中未找到相关内容"
 _QUESTION_BANK_ROUTE = (
     "已识别为出题请求。请进入“我的题库”设置题型、数量、难度和章节；"
     "题库 Agent 会先检索当前课程资料，再生成并保存题目。"
+)
+_VISUAL_QUERY_RE = re.compile(
+    r"图(?:表|像|中|\s*\d)|曲线|坐标|横轴|纵轴|图例|趋势|峰值|谷值|"
+    r"波数|反射率|透射率|高于|低于|以上还是以下|随.+变化",
+    re.IGNORECASE,
 )
 
 
@@ -111,7 +118,7 @@ def _retrieve(
             item["score"] = 1.0
             capped.append(item)
         return capped
-    return retrieve(
+    hits = retrieve(
         query=question,
         vs=vs,
         course_id=course_id,
@@ -119,6 +126,86 @@ def _retrieve(
         scenario=scenario,
         as_of=as_of,
     )
+    if not _VISUAL_QUERY_RE.search(question):
+        return hits
+
+    visual_hits = retrieve_visual_evidence(
+        question,
+        vs,
+        course_id,
+        scenario=scenario,
+        as_of=as_of,
+    )
+    if not visual_hits:
+        return hits
+    seen = {str(hit.get("id") or "") for hit in hits}
+    for hit in visual_hits:
+        chunk_id = str(hit.get("id") or "")
+        if chunk_id and chunk_id not in seen:
+            seen.add(chunk_id)
+            hits.append(hit)
+    return hits
+
+
+def _needs_visual_verification(question: str, hits: list[dict]) -> bool:
+    if not _VISUAL_QUERY_RE.search(question):
+        return False
+    return any(
+        (hit.get("metadata") or {}).get("block_type") in {"image", "image_summary"}
+        and (hit.get("metadata") or {}).get("image_path")
+        for hit in hits
+    )
+
+
+def _verify_visual_evidence(question: str, hits: list[dict]) -> list[dict]:
+    """对最相关图表做一次面向当前问题的 VLM 复核；失败时保留入库摘要。"""
+    if not _needs_visual_verification(question, hits):
+        return hits
+    from src.dependencies import get_vision_client
+    from src.services.vision import DEFAULT_VISUAL_PROMPT
+
+    vision = get_vision_client()
+    if not vision.configured:
+        return hits
+
+    for index, hit in enumerate(hits):
+        metadata = hit.get("metadata") or {}
+        if metadata.get("block_type") not in {"image", "image_summary"}:
+            continue
+        image_path = str(metadata.get("image_path") or "")
+        if not image_path or not Path(image_path).is_file():
+            continue
+        prompt = (
+            f"{DEFAULT_VISUAL_PROMPT}\n\n"
+            f"当前用户问题：{question}\n"
+            "请优先直接回答这个问题；涉及读图数值时说明是近似读数。"
+        )
+        try:
+            analysis = vision.analyze_file(
+                image_path,
+                prompt=prompt,
+                caption=str(metadata.get("image_caption") or ""),
+                page=int(metadata["page"]) if int(metadata.get("page") or -1) > 0 else None,
+            )
+        except Exception as exc:
+            logger.warning("查询时图表复核失败，继续使用入库摘要: %s", exc)
+            return hits
+        enriched = dict(hit)
+        enriched["metadata"] = dict(metadata)
+        enriched["text"] = (
+            f"{hit.get('text', '').strip()}\n"
+            f"针对当前问题的视觉复核：{analysis}"
+        ).strip()
+        output = list(hits)
+        output[index] = enriched
+        logger.info(
+            "查询时图表复核完成: doc=%s page=%s model=%s",
+            metadata.get("doc_id"),
+            metadata.get("page"),
+            vision.model,
+        )
+        return output
+    return hits
 
 
 def ask(
@@ -160,6 +247,8 @@ def ask(
         logger.info("拒答 threshold=%.4f", config.retrieval.score_threshold)
         _save_turn(conversation_store, conversation_id, course_id, question, _REFUSAL, [], False, mode, intent=intent.to_dict())
         return AnswerData(answer=_REFUSAL, citations=[], grounded=False, intent=_intent_data(intent))
+
+    hits = _verify_visual_evidence(question, hits)
 
     if not llm.configured:
         raise LLMAPIException("AI 服务未配置：请设置 LLM_API_KEY")
@@ -224,6 +313,13 @@ def ask_stream(
             "data": AnswerData(answer=_REFUSAL, citations=[], grounded=False, intent=_intent_data(intent)).model_dump(),
         }
         return
+
+    if _needs_visual_verification(question, hits):
+        from src.dependencies import get_vision_client
+
+        if get_vision_client().configured:
+            yield {"type": "phase", "phase": "analyzing_visual"}
+            hits = _verify_visual_evidence(question, hits)
 
     if not llm.configured:
         yield {"type": "error", "message": "AI 服务未配置：请设置 LLM_API_KEY"}

@@ -273,6 +273,25 @@ class SQLiteDocStore:
         )
         self._conn.commit()
 
+    def supersede_many(self, doc_ids: list[int], superseded_by: int) -> None:
+        """清理同一逻辑资料遗留的多个活跃旧版本。"""
+        targets = sorted(
+            {int(doc_id) for doc_id in doc_ids if int(doc_id) != superseded_by}
+        )
+        if not targets:
+            return
+        placeholders = ",".join("?" for _ in targets)
+        self._conn.execute(
+            f"UPDATE documents SET is_active = 0, status = 'superseded', "
+            f"superseded_by = ?, updated_at = ? WHERE id IN ({placeholders})",
+            (
+                superseded_by,
+                datetime.now(timezone.utc).isoformat(),
+                *targets,
+            ),
+        )
+        self._conn.commit()
+
     def update_evidence_metadata(self, doc_id: int, metadata: dict) -> None:
         """写入可过滤、可排序、可解释的证据元数据。"""
         fields = (

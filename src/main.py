@@ -17,7 +17,13 @@ from fastapi.responses import JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from src.config import config
-from src.dependencies import get_catalog_store, get_doc_store, get_llm_client, get_vector_store
+from src.dependencies import (
+    get_catalog_store,
+    get_doc_store,
+    get_llm_client,
+    get_vector_store,
+    get_vision_client,
+)
 from src.exceptions import AppException
 from src.services.embedding import get_embedding_client
 from src.services.env_store import env_was_created
@@ -141,6 +147,11 @@ async def lifespan(app: FastAPI):
             "LLM",
             "ok" if llm.configured else "warn",
             config.llm.model if llm.configured else "未配置 LLM_API_KEY",
+        ),
+        StartupCheck(
+            "VLM",
+            "ok" if get_vision_client().configured else "warn",
+            config.parsing.visual_model or "未配置（图表仅保留图注）",
         ),
         StartupCheck(
             "Web UI",

@@ -345,6 +345,155 @@ class TestMineruStructure:
         assert persisted.is_file()
         assert persisted.read_bytes() == b"image bytes"
 
+    def test_markdown_fallback_restores_chart_and_physical_page(
+        self, tmp_path, monkeypatch
+    ):
+        """Markdown 回退也必须把图表恢复成图片块，不能退化为整篇纯文本。"""
+        import fitz
+
+        from src.services import parsing
+
+        source = tmp_path / "paper.pdf"
+        pdf = fitz.open()
+        pdf.new_page().insert_text((72, 72), "chapter 5")
+        pdf.new_page().insert_text((72, 72), "Figure placeholder")
+        pdf.save(source)
+        pdf.close()
+
+        images = tmp_path / "images"
+        images.mkdir()
+        chart = images / "chart.jpg"
+        chart.write_bytes(b"chart-bytes")
+        markdown = """## 5.3.3 检测测试结果
+
+正文说明。
+
+![](images/chart.jpg)
+
+图 5.3-1 硅晶圆片入射角 10° 波数与反射率的关系
+"""
+
+        # PyMuPDF 的测试页不含中文字体，单独验证页码搜索函数的 1-based 语义。
+        monkeypatch.setattr(parsing, "_pdf_page_for_caption", lambda *_args: 2)
+        doc = parsing._mineru_md_to_pages(
+            markdown,
+            base_dir=tmp_path,
+            source_path=str(source),
+        )
+
+        image = next(block for block in doc.blocks if block.block_type == "image")
+        assert image.image_path == str(chart)
+        assert image.caption.startswith("图 5.3-1")
+        assert image.page == 2
+        assert all("![](images/chart.jpg)" not in block.text for block in doc.blocks)
+
+    def test_mineru_markdown_assets_are_persisted_before_temp_cleanup(
+        self, tmp_path, monkeypatch
+    ):
+        from src.services import parsing
+
+        source = tmp_path / "paper.pdf"
+        source.write_bytes(b"fake-pdf")
+        assets = tmp_path / "assets"
+        monkeypatch.setattr(parsing.config.storage, "parsed_assets_dir", str(assets))
+        monkeypatch.setattr(parsing, "_mineru_available", lambda _cmd: True)
+
+        def fake_run(args, **_kwargs):
+            output = Path(args[args.index("-o") + 1]) / "paper"
+            (output / "images").mkdir(parents=True)
+            (output / "images" / "chart.jpg").write_bytes(b"chart-bytes")
+            (output / "paper.md").write_text(
+                "正文\n\n![](images/chart.jpg)\n\n图 5.3-1 反射率曲线",
+                encoding="utf-8",
+            )
+            return types.SimpleNamespace(returncode=0), "", ""
+
+        monkeypatch.setattr(parsing, "_run_capture", fake_run)
+        doc = parsing._parse_pdf_mineru(str(source))
+
+        image = next(block for block in doc.blocks if block.block_type == "image")
+        assert Path(image.image_path).is_file()
+        assert Path(image.image_path).read_bytes() == b"chart-bytes"
+
+    def test_vector_chart_caption_is_rendered_when_mineru_has_no_image_block(
+        self, tmp_path
+    ):
+        import fitz
+
+        from src.services import parsing
+
+        source = tmp_path / "vector-chart.pdf"
+        pdf = fitz.open()
+        page = pdf.new_page()
+        page.draw_line((80, 500), (500, 220), color=(0, 0, 1), width=2)
+        page.insert_text((150, 700), "Figure 5.3-1 Reflectance curve")
+        pdf.save(source)
+        pdf.close()
+
+        document = parsing.ParsedDocument(
+            pages=[parsing.ParsedPage(page=1, text="Figure 5.3-1 Reflectance curve")],
+            blocks=[
+                parsing.ParsedBlock(
+                    block_type="caption",
+                    text="Figure 5.3-1 Reflectance curve",
+                    page=1,
+                    order=7,
+                )
+            ],
+        )
+        output = tmp_path / "mineru-output" / "supplemental"
+
+        count = parsing._supplement_missing_figure_images(
+            document,
+            source_path=str(source),
+            output_dir=output,
+        )
+
+        assert count == 1
+        image = next(block for block in document.blocks if block.block_type == "image")
+        assert image.page == 1
+        assert image.caption.startswith("Figure 5.3-1")
+        assert Path(image.image_path).is_file()
+        assert Path(image.image_path).stat().st_size > 100
+
+    def test_pdf_text_caption_is_rendered_when_mineru_omits_caption_block(
+        self, tmp_path
+    ):
+        import fitz
+
+        from src.services import parsing
+
+        source = tmp_path / "missing-caption-block.pdf"
+        pdf = fitz.open()
+        page = pdf.new_page()
+        page.draw_line((80, 500), (500, 220), color=(0, 0, 1), width=2)
+        page.insert_text((150, 700), "Figure 5.3-1 Reflectance curve")
+        pdf.save(source)
+        pdf.close()
+
+        # 模拟 MinerU JSON：保留了章节正文，却完全漏掉图片和图注 block。
+        document = parsing.ParsedDocument(
+            pages=[parsing.ParsedPage(page=1, text="Section 5.3.3")],
+            blocks=[
+                parsing.ParsedBlock(
+                    block_type="text", text="Section 5.3.3", page=1, order=1
+                )
+            ],
+        )
+        output = tmp_path / "mineru-output" / "supplemental"
+
+        count = parsing._supplement_missing_figure_images(
+            document,
+            source_path=str(source),
+            output_dir=output,
+        )
+
+        assert count == 1
+        image = next(block for block in document.blocks if block.block_type == "image")
+        assert image.page == 1
+        assert image.caption.startswith("Figure 5.3-1")
+        assert Path(image.image_path).is_file()
+
     def test_paddle_formula_payloads_keep_page_and_bbox(self):
         from src.services import parsing
 

@@ -10,6 +10,7 @@ from src.services.retrieval import (
     clear_query_embed_cache,
     invalidate_bm25_cache,
     retrieve,
+    retrieve_visual_evidence,
     rrf_fuse,
     tokenize,
 )
@@ -18,6 +19,49 @@ from src.services.storage.catalog_store import (
     DEFAULT_COURSE_ID,
     DEFAULT_COURSE_NAME,
 )
+
+
+def test_visual_evidence_uses_dedicated_image_summary_search(monkeypatch):
+    vs = MagicMock()
+    summaries = [
+        {
+            "id": "50_20",
+            "text": "图片说明：图 5.3-2 反射率曲线",
+            "score": 0.8,
+            "metadata": {
+                "block_type": "image_summary",
+                "image_caption": "图 5.3-2 反射率曲线",
+            },
+        },
+        {
+            "id": "50_19",
+            "text": "图片说明：图 5.3-1 反射率曲线",
+            "score": 0.7,
+            "metadata": {
+                "block_type": "image_summary",
+                "image_caption": "图 5.3-1 反射率曲线",
+            },
+        },
+    ]
+    vs.search.side_effect = lambda _query_vec, **kwargs: (
+        summaries if kwargs.get("block_type") == "image_summary" else []
+    )
+    monkeypatch.setattr(
+        "src.services.retrieval._cached_query_vec", lambda *_args: (0.1, 0.2)
+    )
+
+    out = retrieve_visual_evidence(
+        "图 5.3-1 中 4000 cm^-1 的反射率是多少？",
+        vs,
+        "course-default",
+    )
+
+    assert [hit["id"] for hit in out] == ["50_19"]
+    assert out[0]["metadata"]["retrieval_reason"] == "visual_query"
+    assert [call.kwargs["block_type"] for call in vs.search.call_args_list] == [
+        "image_summary",
+        "image",
+    ]
 
 
 def _chunk(doc_id: str, course_id: str, text: str, course: str = "课"):

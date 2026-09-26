@@ -60,9 +60,9 @@ class LLMConfig:
     model: str = field(default_factory=lambda: os.getenv("LLM_MODEL", "gpt-4o-mini"))
     temperature: float = 0.3
     # 深度推理模型会把推理过程与最终正文共同计入输出预算；允许通过环境变量调整，
-    # 默认 4096，避免推理耗尽 2048 后留下空正文。
+    # 默认 8192，为深度推理保留足够预算，避免推理完成后无最终正文。
     max_tokens: int = field(
-        default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "4096"))
+        default_factory=lambda: int(os.getenv("LLM_MAX_TOKENS", "8192"))
     )
     timeout: int = field(default_factory=lambda: int(os.getenv("LLM_TIMEOUT", "60")))
 
@@ -242,6 +242,8 @@ class ParsingConfig:
     visual_timeout: int = field(
         default_factory=lambda: int(os.getenv("VISUAL_TIMEOUT", "60"))
     )
+    visual_required: bool = field(default_factory=lambda: os.getenv("VISUAL_REQUIRED", "true").lower() == "true")
+    visual_max_tokens: int = field(default_factory=lambda: int(os.getenv("VISUAL_MAX_TOKENS", "4096")))
 
 
 @dataclass
@@ -307,6 +309,8 @@ class AppConfig:
             raise ValueError("pdf_quality_threshold 须在 0～1")
         if self.parsing.visual_timeout < 0:
             raise ValueError("visual_timeout 必须 >= 0")
+        if self.parsing.visual_max_tokens <= 0:
+            raise ValueError("visual_max_tokens 必须 > 0")
         if self.max_upload_mb <= 0:
             raise ValueError("max_upload_mb 必须大于 0")
         if self.retrieval.top_k <= 0:

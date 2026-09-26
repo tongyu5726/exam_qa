@@ -34,6 +34,15 @@
 
 ## Quick Start
 
+### PDF 图表视觉处理
+
+- 入库时检查 PDF 位图与矢量绘图页面，补充整页视觉图片，不只依赖图注和 MinerU 裁剪图。整页可能含多个图表、正文或装饰；该保守策略会增加调用量、费用和耗时。
+- 每个非噪声图片块都生成独立 `image_summary`，与同页、标题边界内前后最近的正文联合入库，并保留图片路径、图注、页码和章节。图中事实和邻近正文分别标记，查询可继续使用原图复核。
+- 默认 `VISUAL_REQUIRED=true`：图片缺失、未配置模型、调用失败、空响应或输出截断都不能视为摘要完成；该次入库失败。`VISUAL_MAX_TOKENS=4096` 控制摘要输出预算。仅在接受不完整图片证据时显式设置 `VISUAL_REQUIRED=false`，降级块会标明“视觉识别未完成”。
+- 解析和视觉摘要在复用旧文档记录之前完成，避免视觉失败清空旧索引；PDF 更新仍使用独立新版本，成功后切换。原文件及旧版本元数据保留。
+- 历史文档不会因为代码更新自动补摘要。确认允许将该资料的图片及所在整页发送到配置的视觉服务商后，再按课程使用 PDF 强制重建。需要重启服务加载代码。
+- 覆盖检测不是对有用图表的语义识别保证，VLM 返回摘要也不等于读数正确。特殊 PDF 绘制对象、低清图及密集多图须结合真实资料核验；离线替身测试不代表外部 API 已连通。
+
 需要 Python 3.11–3.13（默认 3.11）和 [uv](https://docs.astral.sh/uv/)。进入下载并解压后的项目根目录，再执行下面的命令。启动页面不需要 API Key；生成答案前需配置 OpenAI 兼容的对话 API。PDF 默认尝试可选的 MinerU，不可用时回退到内置 PyMuPDF；扫描版 PDF 的 OCR 需安装 [Tesseract](https://github.com/tesseract-ocr/tesseract) 及 `eng` / `chi_sim` 语言包。旧版 `.doc` 需 [LibreOffice](https://www.libreoffice.org/) 或 Windows 本机 Microsoft Word。
 
 当前锁文件的主要目标平台为 Windows x64、Linux x64（glibc ≥ 2.28）和 Apple Silicon macOS ≥ 14。旧 macOS、Intel Mac、32 位系统及其他架构不保证可直接使用此锁文件；需另行选择兼容的 Torch 和依赖版本。已实测 Windows Python 3.11 的全新 CPU 安装、启动与单元测试；Linux/macOS 仅检查了依赖安装计划，尚未在这些系统上执行运行测试。
@@ -207,13 +216,15 @@ exam-rag/
 <details>
 <summary>PDF 高精度解析与 MarkPDFdown 适配</summary>
 
-默认链路为 MinerU `hybrid-engine` + `medium`，保留标题、表格、公式和图片结构。系统为每个候选结果计算 0～1 的质量分数（文本密度、页覆盖率、结构还原）；低于 `PDF_QUALITY_THRESHOLD` 时，会在 `MINERU_RETRY_HIGH=true` 下以 `--effort high` 重跑，并仅在结果更好时替换。随后仍会保留 PyMuPDF、OCR、Fitz 回退链，避免单个工具异常导致资料无法入库。
+默认链路为 MinerU `hybrid-engine` + `medium`，保留标题、表格、公式和图片结构。系统为每个候选结果计算 0～1 的质量分数（文本密度、页覆盖率、结构还原）；低于 `PDF_QUALITY_THRESHOLD` 时，会在 `MINERU_RETRY_HIGH=true` 下以 `--effort high` 重跑，并仅在结果更好时替换。随后仍会保留 PyMuPDF、OCR、Fitz 回退链，避免单个工具异常导致资料无法入库。若当前 MinerU 版本只产出 Markdown，系统仍会识别其中的 `images/*` 引用、关联相邻图注、按图号映射 PDF 物理页，并在清理临时目录前保存图片，而不会再把整篇退化成纯文本。
 
 `MARKPDFDOWN_ENABLED=false` 是默认安全状态。已核验 MarkPDFdown 1.1.2 的文件模式为 `markpdfdown --input <PDF> --output <Markdown 文件>`；启用时可设置 `MARKPDFDOWN_CMD=markpdfdown` 和 `MARKPDFDOWN_ARGS=--input "{input}" --output "{output_file}"`。适配器也支持目录型 CLI 的 `{output}` 占位符；`{input}` 为 PDF 绝对路径，`{output_file}` 为临时 Markdown 文件。MarkPDFdown 需可用的多模态模型和 LiteLLM 凭据；无有效输出时自动回退内置链路。
 
 当前环境若未安装 Tesseract，PyMuPDF 的扫描件 OCR 后备无法实际运行；此时优先使用 MinerU 的 `high`，或安装 Tesseract 及 `eng`、`chi_sim` 语言包后再启用 OCR 回退。
 
 对于手写批注、公式与截图型讲义，解析结果会将 **PDF 物理页**、PDF 自定义页签和识别出的教材引用（如 `P28 Ex2`）分开写入 metadata；“考点/注意”等批注单独保留为可检索证据，页眉页脚、手机状态栏、邮箱/网址等明确噪声不入库。MinerU / MarkPDFdown 导出的图片会复制到 `PARSED_ASSETS_DIR`，因此配置视觉模型后，入库时可实际读取这些裁剪图生成摘要，而不是引用已清理的临时文件。公式兼容 `latex`、`math_content` 和 `equation` 等字段，统一保存为 LaTeX 分隔格式。
+
+VLM 使用 OpenAI 兼容协议，可在设置页填写模型、Base URL、API Key 和超时。`GET /api/v1/vlm/status` 返回脱敏配置状态；`POST /api/v1/vlm/analyze` 接收 multipart 图片以及可选的 `prompt`、`caption`、`page`，用于单独验证图表/公式理解。入库时使用同一个 VLM 客户端，图表摘要会保留图号，并重点提取坐标轴、单位、图例、趋势与可读关键数值。修改 VLM 配置后，需要重新扫描或重新上传既有 PDF，才能为旧资料生成 `image_summary` 向量块。
 
 </details>
 

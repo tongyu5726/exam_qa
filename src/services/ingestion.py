@@ -285,6 +285,23 @@ def _formula_section_hint(context: str) -> str:
     return matches[-1].strip() if matches else ""
 
 
+def _image_context(blocks: list, index: int) -> str:
+    """同页前后最近正文，遇标题立即停止，避免跨章节拼接。"""
+    selected = []
+    for direction in (-1, 1):
+        for distance in range(1, 7):
+            position = index + distance * direction
+            if not 0 <= position < len(blocks):
+                break
+            other = blocks[position]
+            if other.page != blocks[index].page or other.block_type == "title":
+                break
+            if other.block_type == "text" and other.content_role == "content" and other.text.strip():
+                selected.append((position, other.text.strip()[:600]))
+                break
+    return "\n".join(text for _, text in sorted(selected))
+
+
 def _chunk_structured(
     parsed,
     *,
@@ -354,6 +371,8 @@ def _chunk_structured(
                     "pdf_page_label": pdf_page_label,
                     "textbook_references": textbook_references,
                     "content_role": "content",
+                    "image_path": "",
+                    "image_caption": "",
                 }
             )
 
@@ -382,6 +401,8 @@ def _chunk_structured(
                 "pdf_page_label": block.pdf_page_label,
                 "textbook_references": _join_references(block.textbook_references),
                 "content_role": block.content_role,
+                "image_path": block.image_path if block_type in {"image", "image_summary"} else "",
+                "image_caption": block.caption if block_type in {"image", "image_summary"} else "",
             }
         )
 
@@ -393,7 +414,7 @@ def _chunk_structured(
             logger.info("跳过噪声 block: %s 第%s页", btype, block.page or "?")
             continue
 
-        if block.content_role in {"annotation", "reference"}:
+        if block.content_role in {"annotation", "reference"} and btype != "image":
             _flush()
             text = block.text.strip()
             if text:
@@ -425,16 +446,26 @@ def _chunk_structured(
 
         if btype == "image":
             _flush()
-            summary = _summarize_image(block.image_path, block.caption, block.page)
+            nearby = _image_context(blocks, block_index)
+            summary = _summarize_image(block.image_path, block.caption, block.page, nearby)
             if summary:
-                _standalone(block, summary, "image_summary")
-            elif block.caption:
-                _standalone(block, f"图片说明：{block.caption}", "image")
+                text = f"视觉摘要：{summary}"
+                if block.caption:
+                    text = f"图片说明：{block.caption}\n{text}"
+                if _section_path():
+                    text = f"§ {_section_path()}\n{text}"
+                if nearby:
+                    text += f"\n邻近正文（非图中直接读数）：{nearby}"
+                _standalone(block, text, "image_summary", extra_context=nearby)
+            elif config.parsing.visual_required:
+                raise BadRequestException(
+                    f"第{block.page or '?'}页图片未完成 VLM 摘要：{block.caption or '无图注图片'}。"
+                    "请检查视觉模型配置、图片文件和调用日志后重试。"
+                )
             else:
-                logger.info(
-                    "图片无摘要无说明，跳过入库: 第%s页 %s",
-                    block.page or "?",
-                    block.image_path or "",
+                _standalone(
+                    block, f"[视觉识别未完成] 图片说明：{block.caption or '无图注图片'}",
+                    "image", extra_context=nearby,
                 )
             continue
 
@@ -710,17 +741,27 @@ def ingest_file(
             f"不支持的文件格式: {ext}，仅接受 PDF/TXT/MD/DOC/DOCX/PPTX"
         )
 
+    # 先完成解析及视觉摘要；失败时不清除同路径旧文档的向量。
+    existing = ds.find_by_path(str(filepath.resolve()))
+    if existing and existing.get("course_id") and existing["course_id"] != course_id:
+        raise BadRequestException("文件已归属其他课程，不能跨课程入库")
+    parsed = parsed_document if parsed_document is not None else parse_file(path)
+    if ext == ".pdf":
+        from src.services.visual_coverage import ensure_pdf_visual_coverage
+        ensure_pdf_visual_coverage(parsed, path)
+    full_text = parsed.full_text
+    if not full_text.strip() and not any(b.block_type == "image" for b in parsed.blocks):
+        raise BadRequestException("解析后内容为空")
+    structured = _chunk_structured(
+        parsed, chunk_size=config.chunk.chunk_size, chunk_overlap=config.chunk.chunk_overlap,
+    ) if parsed.has_blocks else None
+
     doc_id = _acquire_doc_id(
         ds, vs, filepath, filename, course, course_id, is_active=is_active
     )
     logger.info("文档记录就绪: doc_id=%s", doc_id)
 
     try:
-        parsed = parsed_document if parsed_document is not None else parse_file(path)
-        full_text = parsed.full_text
-        if not full_text.strip():
-            raise BadRequestException("解析后内容为空")
-
         current_metadata = ds.get(doc_id) or {}
         if current_metadata.get("metadata_source") == "manual":
             evidence = {
@@ -742,11 +783,6 @@ def ingest_file(
 
         if parsed.has_blocks:
             # MinerU 结构化切片：语义分组 + 丰富 metadata
-            structured = _chunk_structured(
-                parsed,
-                chunk_size=config.chunk.chunk_size,
-                chunk_overlap=config.chunk.chunk_overlap,
-            )
             chunk_texts = [c["text"] for c in structured]
             chunk_pages = [c["page"] for c in structured]
             chapters = [c["chapter"] for c in structured]
@@ -758,6 +794,8 @@ def ingest_file(
             pdf_page_labels = [c["pdf_page_label"] for c in structured]
             textbook_references = [c["textbook_references"] for c in structured]
             content_roles = [c["content_role"] for c in structured]
+            image_paths = [c.get("image_path", "") for c in structured]
+            image_captions = [c.get("image_caption", "") for c in structured]
         else:
             # 非结构化文档：保持原有按页分块 + 章节推断
             raw_chunks = _chunk_document(
@@ -779,6 +817,8 @@ def ingest_file(
             pdf_page_labels = [""] * len(chunk_texts)
             textbook_references = [""] * len(chunk_texts)
             content_roles = ["content"] * len(chunk_texts)
+            image_paths = [""] * len(chunk_texts)
+            image_captions = [""] * len(chunk_texts)
 
         if not chunk_texts:
             raise BadRequestException("分块结果为空")
@@ -806,6 +846,8 @@ def ingest_file(
                 "pdf_page_label": pdf_page_labels[i] if i < len(pdf_page_labels) else "",
                 "textbook_references": textbook_references[i] if i < len(textbook_references) else "",
                 "content_role": content_roles[i] if i < len(content_roles) else "content",
+                "image_path": image_paths[i] if i < len(image_paths) else "",
+                "image_caption": image_captions[i] if i < len(image_captions) else "",
                 "parser_name": parsed.parser_name,
                 "parse_quality": parsed.parse_quality,
                 "is_active": is_active,

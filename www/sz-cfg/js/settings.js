@@ -8,7 +8,10 @@ const GROUPS = [
   {
     id: "llm",
     title: "模型管理",
-    fields: [{ key: "timeout", label: "超时（秒）", type: "number" }],
+    fields: [
+      { key: "max_tokens", label: "最大输出 Token（推理模型建议 8192）", type: "number" },
+      { key: "timeout", label: "超时（秒）", type: "number" },
+    ],
   },
   {
     id: "embedding",
@@ -91,8 +94,15 @@ const GROUPS = [
       },
       { key: "mineru_cmd", label: "MinerU 命令" },
       { key: "mineru_timeout", label: "MinerU 超时秒 (0=不限)", type: "number" },
-      { key: "visual_model", label: "视觉模型 (空=关闭图片摘要)" },
-      { key: "visual_timeout", label: "视觉摘要超时秒", type: "number" },
+      { key: "visual_model", label: "VLM 模型 (空=关闭图片理解)" },
+      { key: "visual_base_url", label: "VLM Base URL (OpenAI 兼容)" },
+      {
+        key: "visual_api_key",
+        label: "VLM API Key (留空复用 LLM Key)",
+        secret: true,
+        configuredKey: "visual_configured",
+      },
+      { key: "visual_timeout", label: "VLM 超时秒", type: "number" },
     ],
   },
   {
@@ -393,7 +403,7 @@ function renderLlmMain(group) {
     </section>
 
     <section class="sz-llm-card">
-      <h3>请求超时</h3>
+      <h3>生成参数</h3>
       <form class="sz-config-form sz-llm-form" id="sz-config-form" autocomplete="off">
         ${group.fields.map((f) => fieldHtml(f, data)).join("")}
         <div class="sz-config-actions">
@@ -710,7 +720,7 @@ function fieldHtml(f, data) {
   }
 
   if (f.secret) {
-    const configured = !!data.configured;
+    const configured = !!data[f.configuredKey || "configured"];
     const ph = configured ? "已配置" : "未配置";
     return `
       <label class="sz-field">

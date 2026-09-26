@@ -134,6 +134,78 @@ def _vector_search(
     return vs.search(query_vec, **kwargs)
 
 
+_FIGURE_QUERY_REF = re.compile(
+    r"(?:图|figure|fig\.?)\s*([0-9]+(?:[.\-][0-9]+)*)",
+    re.IGNORECASE,
+)
+
+
+def retrieve_visual_evidence(
+    query: str,
+    vs: ChromaVectorStore,
+    course_id: str,
+    *,
+    top_k: int = 3,
+    scenario: str | None = None,
+    as_of: str | None = None,
+) -> list[dict]:
+    """为读图问题单独检索 image_summary，避免图表被普通正文挤出 Top-K。"""
+    q = query.strip()
+    if not q or top_k <= 0:
+        return []
+    try:
+        query_vec = list(_cached_query_vec(_embed_cache_key(), q))
+        hits: list[dict] = []
+        seen_ids: set[str] = set()
+        for block_type in ("image_summary", "image"):
+            kwargs: dict[str, object] = {
+                "top_k": top_k,
+                "course_id": course_id,
+                "block_type": block_type,
+            }
+            if scenario:
+                kwargs["scenario"] = scenario
+            if as_of:
+                kwargs["as_of"] = as_of
+            for hit in vs.search(query_vec, **kwargs):
+                chunk_id = str(hit.get("id") or "")
+                if chunk_id and chunk_id not in seen_ids:
+                    seen_ids.add(chunk_id)
+                    hits.append(hit)
+        hits.sort(key=lambda hit: float(hit.get("score") or 0.0), reverse=True)
+    except Exception as exc:
+        # 视觉召回是增强链路，失败时仍保留普通正文回答。
+        logger.warning("图表证据检索失败: %s", exc)
+        return []
+
+    requested = {
+        match.group(1).replace(".", "-")
+        for match in _FIGURE_QUERY_REF.finditer(q)
+    }
+    if requested:
+        exact = []
+        for hit in hits:
+            meta = hit.get("metadata") or {}
+            searchable = f"{hit.get('text', '')} {meta.get('image_caption', '')}"
+            available = {
+                match.group(1).replace(".", "-")
+                for match in _FIGURE_QUERY_REF.finditer(searchable)
+            }
+            if requested.intersection(available):
+                exact.append(hit)
+        if exact:
+            hits = exact
+
+    output: list[dict] = []
+    for hit in hits[:top_k]:
+        item = dict(hit)
+        meta = dict(hit.get("metadata") or {})
+        meta["retrieval_reason"] = "visual_query"
+        item["metadata"] = meta
+        output.append(item)
+    return output
+
+
 _BM25_CACHE: dict[str, tuple[list[dict], _BM25]] = {}
 
 

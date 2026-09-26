@@ -209,8 +209,8 @@ def analyze_chart(
 ) -> dict:
     """analyze_chart：分析资料中的图片/图表。
 
-    基于入库时生成的视觉摘要（VISUAL_MODEL）；未配置视觉模型或无摘要时
-    返回提示，不编造内容。
+    基于入库时生成的视觉摘要；问题命中图表信号且原图仍在时，再用 VLM
+    面向当前问题复核一次。未配置视觉模型或无摘要时返回提示，不编造内容。
     """
     hits: list[dict] = []
     if query:
@@ -245,6 +245,10 @@ def analyze_chart(
         seen.add(key)
         deduped.append(h)
     hits = deduped
+    if hits:
+        from src.services.query import _verify_visual_evidence
+
+        hits = _verify_visual_evidence(query, hits)
     summaries = [h.get("text", "").strip() for h in hits if h.get("text", "").strip()]
     if not summaries:
         return {
@@ -351,7 +355,7 @@ TOOL_SCHEMAS: list[dict] = [
         "type": "function",
         "function": {
             "name": "analyze_chart",
-            "description": "分析资料中的图片/图表（基于入库时生成的视觉摘要）。未配置视觉模型或无摘要时返回提示，不编造内容。",
+            "description": "分析资料中的图片/图表；优先使用入库摘要，必要时调用 VLM 复核原图。未配置视觉模型或无摘要时返回提示，不编造内容。",
             "parameters": {
                 "type": "object",
                 "properties": {

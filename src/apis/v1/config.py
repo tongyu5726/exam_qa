@@ -41,6 +41,7 @@ def _build_config_data(request: Request) -> dict:
             "formats": providers.get("formats") or [],
             "model": llm.model,
             "base_url": llm.base_url,
+            "max_tokens": llm.max_tokens,
             "timeout": llm.timeout,
             "configured": bool(llm.api_key),
         },
@@ -140,6 +141,8 @@ def _patch_to_env(body: ConfigUpdateRequest) -> tuple[dict[str, str], list[str]]
             updates["LLM_BASE_URL"] = p["base_url"].strip()
         if "model" in p:
             updates["LLM_MODEL"] = p["model"].strip()
+        if "max_tokens" in p:
+            updates["LLM_MAX_TOKENS"] = str(p["max_tokens"])
         if "timeout" in p:
             updates["LLM_TIMEOUT"] = str(p["timeout"])
         from src.services import llm_providers as llm_reg

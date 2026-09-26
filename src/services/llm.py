@@ -83,7 +83,8 @@ class OpenAIClient:
                     reasoning_chars,
                 )
                 raise LLMAPIException(
-                    "模型完成了推理，但没有返回可显示的答案。请重试，或提高 LLM_MAX_TOKENS。"
+                    "模型完成了推理，但没有返回可显示的答案。"
+                    f"当前 LLM_MAX_TOKENS={self._max_tokens}，请提高后重试。"
                 )
             return content
         except Exception as e:
@@ -137,7 +138,8 @@ class OpenAIClient:
                     reasoning_chars,
                 )
                 raise LLMAPIException(
-                    "模型完成了推理，但没有返回可显示的答案。请重试，或提高 LLM_MAX_TOKENS。"
+                    "模型完成了推理，但没有返回可显示的答案。"
+                    f"当前 LLM_MAX_TOKENS={self._max_tokens}，请提高后重试。"
                 )
             logger.info(
                 "LLM 流式生成完成: model=%s finish_reason=%s content_chars=%d reasoning_chars=%d",

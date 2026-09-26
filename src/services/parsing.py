@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import base64
 import hashlib
 import json
 import logging
@@ -834,94 +833,351 @@ def _mineru_json_to_pages(content: dict) -> ParsedDocument:
     return _mineru_json_to_document(content)
 
 
-def _mineru_md_to_pages(md_text: str) -> ParsedDocument:
-    """无 JSON 时的回退：Markdown 整体作为一页。"""
+_MD_IMAGE_RE = re.compile(
+    r"!\[(?P<alt>[^\]]*)\]\(\s*(?P<path><[^>]+>|[^\s)]+)(?:\s+[\"'][^\"']*[\"'])?\s*\)"
+)
+_FIGURE_CAPTION_RE = re.compile(
+    r"^(?:图\s*\d+(?:\.\d+)*(?:\s*[-－—]\s*\d+)*|figure\s*\d+|fig\.?\s*\d+)",
+    re.IGNORECASE,
+)
+_FIGURE_LABEL_RE = re.compile(r"图\s*\d+(?:\.\d+)*(?:\s*[-－—]\s*\d+)*")
+_ANY_FIGURE_LABEL_RE = re.compile(
+    r"(?:图\s*\d+(?:\.\d+)*(?:\s*[-－—]\s*\d+)*|"
+    r"figure\s*\d+(?:[.\-]\d+)*|fig\.?\s*\d+(?:[.\-]\d+)*)",
+    re.IGNORECASE,
+)
+
+
+def _plain_markdown_line(value: str) -> str:
+    value = re.sub(r"<[^>]+>", "", value)
+    return re.sub(r"\s+", " ", value).strip()
+
+
+def _normalized_page_text(value: str) -> str:
+    value = value.replace("－", "-").replace("—", "-")
+    return re.sub(r"\s+", "", value).lower()
+
+
+def _pdf_normalized_pages(source_path: str | None) -> list[str]:
+    """一次读取 PDF 文本层，供同一文档的多个图注复用。"""
+    if not source_path:
+        return []
+    try:
+        import fitz
+
+        pdf = fitz.open(source_path)
+        try:
+            return [_normalized_page_text(page.get_text("text")) for page in pdf]
+        finally:
+            pdf.close()
+    except Exception as exc:
+        logger.debug("无法读取 PDF 文本层以定位图片: %s", exc)
+    return []
+
+
+def _pdf_page_for_caption(page_texts: list[str], caption: str) -> int | None:
+    """按图号/图注把 MinerU Markdown 图片映射回 PDF 物理页（1-based）。"""
+    if not caption:
+        return None
+    label_match = _FIGURE_LABEL_RE.search(caption)
+    needles = [_normalized_page_text(caption)]
+    if label_match:
+        needles.append(_normalized_page_text(label_match.group(0)))
+    for needle in needles:
+        if not needle:
+            continue
+        for index, page_text in enumerate(page_texts):
+            if needle in page_text:
+                return index + 1
+    return None
+
+
+def _caption_after_image(md_text: str, start: int) -> tuple[str, int]:
+    """读取图片后首个非空 Markdown 行；若是图注，同时返回消费位置。"""
+    tail = md_text[start:]
+    match = re.match(
+        r"(?P<prefix>[ \t]*(?:\r?\n)[ \t]*(?:\r?\n[ \t]*)*)"
+        r"(?P<line>[^\r\n]+)",
+        tail,
+    )
+    if not match:
+        return "", start
+    caption = _plain_markdown_line(match.group("line"))
+    if not _FIGURE_CAPTION_RE.match(caption):
+        return "", start
+    return caption, start + match.end()
+
+
+def _mineru_md_to_pages(
+    md_text: str,
+    *,
+    base_dir: Path | None = None,
+    source_path: str | None = None,
+) -> ParsedDocument:
+    """MinerU 无结构化 JSON 时，从 Markdown 恢复正文与图片 block。
+
+    MinerU 常把裁剪图写为 ``![](images/xxx.jpg)``。旧实现将 Markdown 整体
+    当作纯文本，导致图片既不入库也在临时目录清理时丢失。这里保留原始顺序，
+    关联紧随图片的图注，并利用 PDF 文本层中的图号还原 1-based 物理页。
+    """
     text = md_text.strip()
-    return ParsedDocument([ParsedPage(page=None, text=text)] if text else [])
+    if not text:
+        return ParsedDocument([])
+
+    matches = list(_MD_IMAGE_RE.finditer(text))
+    if not matches:
+        return ParsedDocument([ParsedPage(page=None, text=text)])
+
+    blocks: list[ParsedBlock] = []
+    page_texts = _pdf_normalized_pages(source_path)
+    cursor = 0
+    order = 0
+    for match in matches:
+        if match.start() < cursor:
+            continue
+        preceding = text[cursor : match.start()].strip()
+        if preceding:
+            blocks.append(
+                _annotate_block(
+                    ParsedBlock(
+                        block_type="text",
+                        text=preceding,
+                        page=None,
+                        order=order,
+                    )
+                )
+            )
+            order += 1
+
+        caption, consumed_to = _caption_after_image(text, match.end())
+        alt = _plain_markdown_line(match.group("alt"))
+        if not caption and _FIGURE_CAPTION_RE.match(alt):
+            caption = alt
+        raw_path = match.group("path").strip("<>")
+        page = _pdf_page_for_caption(page_texts, caption)
+        blocks.append(
+            _annotate_block(
+                ParsedBlock(
+                    block_type="image",
+                    text=caption,
+                    page=page,
+                    image_path=_resolve_image_path(raw_path, base_dir),
+                    caption=caption,
+                    order=order,
+                )
+            )
+        )
+        order += 1
+        cursor = consumed_to if consumed_to > match.end() else match.end()
+
+    trailing = text[cursor:].strip()
+    if trailing:
+        blocks.append(
+            _annotate_block(
+                ParsedBlock(
+                    block_type="text",
+                    text=trailing,
+                    page=None,
+                    order=order,
+                )
+            )
+        )
+    return ParsedDocument(pages=_blocks_to_pages(blocks), blocks=blocks)
 
 
-def _image_mime(path: Path) -> str:
-    return {
-        ".png": "image/png",
-        ".jpg": "image/jpeg",
-        ".jpeg": "image/jpeg",
-        ".webp": "image/webp",
-        ".gif": "image/gif",
-        ".bmp": "image/bmp",
-    }.get(path.suffix.lower(), "")
+def _figure_caption(block: ParsedBlock) -> tuple[str, str] | None:
+    """从独立图注 block 中提取图号和简短图注，排除“由图…可知”等正文引用。"""
+    for raw_line in (block.caption or block.text).splitlines():
+        line = _plain_markdown_line(raw_line)
+        if not line or not _FIGURE_CAPTION_RE.match(line):
+            continue
+        label = _ANY_FIGURE_LABEL_RE.match(line)
+        if label:
+            return label.group(0), line[:240]
+    return None
 
 
-def _summarize_image(image_path: str, caption: str, page: int | None) -> str | None:
+def _supplement_missing_figure_images(
+    document: ParsedDocument,
+    *,
+    source_path: str,
+    output_dir: Path,
+) -> int:
+    """为 MinerU 未导出的矢量图表渲染 PDF 区域，生成可供 VLM 使用的图片块。"""
+    existing = {
+        (
+            block.page,
+            _normalized_page_text(match.group(0)),
+        )
+        for block in document.blocks
+        if block.block_type == "image"
+        for match in [_ANY_FIGURE_LABEL_RE.search(block.caption or block.text)]
+        if match
+    }
+    candidates: list[tuple[ParsedBlock, str, str]] = []
+    seen = set(existing)
+    for block in document.blocks:
+        if not block.page:
+            continue
+        parsed = _figure_caption(block)
+        if parsed is None:
+            continue
+        label, caption = parsed
+        key = (block.page, _normalized_page_text(label))
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append((block, label, caption))
+    try:
+        import fitz
+
+        pdf = fitz.open(source_path)
+    except Exception as exc:
+        logger.warning("无法打开 PDF 以补偿图表图片: %s", exc)
+        return 0
+
+    # MinerU 可能把矢量图和图注一起漏掉，但 PDF 自身的文本层仍保留图注。
+    # 不能只扫描 MinerU blocks；否则类似“图 5.3-1”虽能被 PyMuPDF 读到，
+    # 却永远不会被渲染为可供 VLM 分析的图片。
+    page_orders: dict[int, int] = {}
+    for block in document.blocks:
+        if block.page:
+            page_orders[block.page] = max(page_orders.get(block.page, -1), block.order)
+    for page_index, page in enumerate(pdf):
+        physical_page = page_index + 1
+        for raw_line in page.get_text("text").splitlines():
+            caption = _plain_markdown_line(raw_line)
+            if not caption or not _FIGURE_CAPTION_RE.match(caption):
+                continue
+            label_match = _ANY_FIGURE_LABEL_RE.match(caption)
+            if not label_match:
+                continue
+            label = label_match.group(0)
+            key = (physical_page, _normalized_page_text(label))
+            if key in seen:
+                continue
+            seen.add(key)
+            order = page_orders.get(physical_page, -1) + 1
+            page_orders[physical_page] = order
+            candidates.append(
+                (
+                    ParsedBlock(
+                        block_type="caption",
+                        text=caption,
+                        page=physical_page,
+                        order=order,
+                    ),
+                    label,
+                    caption[:240],
+                )
+            )
+
+    if not candidates:
+        pdf.close()
+        return 0
+
+    created = 0
+    output_dir.mkdir(parents=True, exist_ok=True)
+    try:
+        for source_block, label, caption in candidates:
+            page_index = int(source_block.page or 0) - 1
+            if page_index < 0 or page_index >= pdf.page_count:
+                continue
+            page = pdf[page_index]
+            label_rects = page.search_for(label)
+            if not label_rects:
+                compact = re.sub(r"\s+", "", label)
+                label_rects = page.search_for(compact)
+            if label_rects:
+                caption_rect = label_rects[-1]
+                clip = fitz.Rect(
+                    page.rect.x0,
+                    max(page.rect.y0, caption_rect.y0 - page.rect.height * 0.62),
+                    page.rect.x1,
+                    min(page.rect.y1, caption_rect.y1 + 24),
+                )
+            else:
+                # 找不到图注坐标时宁可渲染整页，避免再次丢失矢量图。
+                clip = page.rect
+            safe_label = re.sub(r"[^0-9A-Za-z]+", "_", label).strip("_") or str(created)
+            image_file = output_dir / (
+                f"page_{source_block.page:04d}_{safe_label}_{created:02d}.png"
+            )
+            pixmap = page.get_pixmap(matrix=fitz.Matrix(2, 2), clip=clip, alpha=False)
+            pixmap.save(image_file)
+            document.blocks.append(
+                _annotate_block(
+                    ParsedBlock(
+                        block_type="image",
+                        text=caption,
+                        page=source_block.page,
+                        image_path=str(image_file.resolve()),
+                        caption=caption,
+                        order=source_block.order,
+                        bbox=(clip.x0, clip.y0, clip.x1, clip.y1),
+                        pdf_page_label=source_block.pdf_page_label,
+                    )
+                )
+            )
+            created += 1
+    except Exception as exc:
+        logger.warning("PDF 图表补偿渲染失败: %s", exc)
+    finally:
+        pdf.close()
+
+    if created:
+        document.blocks.sort(key=lambda block: (block.page or 0, block.order))
+        logger.info("MinerU 补偿渲染 %d 个矢量图表区域", created)
+    return created
+
+
+def _summarize_image(image_path: str, caption: str, page: int | None, context: str = "") -> str | None:
     """用配置的视觉模型生成图片/图表摘要（多模态视觉理解）。
 
     未配置 VISUAL_MODEL / 图片缺失 / 调用失败时返回 None，由调用方回退占位，
     不阻断入库主链路。
     """
-    p = config.parsing
-    if not p.visual_model or not image_path:
+    if not config.parsing.visual_model or not image_path:
         return None
     path = Path(image_path)
     if not path.exists():
         logger.warning("图片不存在，跳过视觉摘要: %s", image_path)
         return None
-    mime = _image_mime(path)
-    if not mime:
-        logger.warning("不支持的图片格式，跳过视觉摘要: %s", path.name)
-        return None
-    base_url = p.visual_base_url or config.llm.base_url or "https://api.openai.com/v1"
-    api_key = p.visual_api_key or config.llm.api_key
-    if not api_key:
-        logger.warning("VISUAL_MODEL 已配置但无 VISUAL_API_KEY / LLM_API_KEY，跳过视觉摘要")
-        return None
     try:
-        data_url = (
-            f"data:{mime};base64,"
-            f"{base64.b64encode(path.read_bytes()).decode('ascii')}"
-        )
-    except OSError as e:
-        logger.warning("读取图片失败，跳过视觉摘要: %s", e)
-        return None
+        # 延迟导入避免 dependencies -> service 的初始化环。
+        from src.dependencies import get_vision_client
+        from src.services.vision import DEFAULT_VISUAL_PROMPT
 
-    prompt = (
-        "请用中文描述这张教学资料图片/图表的核心内容与关键信息，"
-        "2-3 句话，适合作为检索摘要，不要输出多余内容。"
-    )
-    if caption:
-        prompt += f"\n图片说明（可能含编号）：{caption}"
-    try:
-        from openai import OpenAI
-
-        from src.services.http_client import create_openai_http_client
-
-        client = OpenAI(
-            api_key=api_key,
-            base_url=base_url,
-            timeout=p.visual_timeout,
-            max_retries=1,
-            http_client=create_openai_http_client(p.visual_timeout),
+        prompt = DEFAULT_VISUAL_PROMPT
+        if context:
+            prompt += "\n邻近正文仅供理解上下文，不可冒充图中事实：\n" + context
+        text = get_vision_client().analyze_file(
+            path,
+            prompt=prompt,
+            caption=caption,
+            page=page,
         )
-        resp = client.chat.completions.create(
-            model=p.visual_model,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": data_url}},
-                    ],
-                }
-            ],
-            temperature=0.2,
-            max_tokens=200,
-        )
-        text = (resp.choices[0].message.content or "").strip()
         if text:
             logger.info(
                 "视觉摘要完成: %s (第%s页)", Path(image_path).name, page or "?"
             )
             return text
-    except Exception as e:
-        logger.warning("视觉摘要失败，图片按占位文本处理: %s", e)
+    except Exception as exc:
+        logger.warning("视觉摘要失败，图片按图注文本处理: %s", exc)
+    return None
+
+
+def _mineru_content_payload(content) -> dict | None:
+    """兼容 MinerU 不同版本的 content_list JSON 外层结构。"""
+    if isinstance(content, list) and any(isinstance(item, dict) for item in content):
+        return {"content_list": content}
+    if not isinstance(content, dict):
+        return None
+    if isinstance(content.get("content_list"), list):
+        return content
+    data = content.get("data")
+    if isinstance(data, dict) and isinstance(data.get("content_list"), list):
+        return data
     return None
 
 
@@ -982,27 +1238,55 @@ def _parse_pdf_mineru(
         json_files = sorted(tmp.rglob("*.json"))
         md_doc = None
         if md_files:
+            # 输出目录可能同时含说明 Markdown 与正文 Markdown，优先正文体量最大的文件。
+            md_file = max(md_files, key=lambda candidate: candidate.stat().st_size)
             md_doc = _mineru_md_to_pages(
-                md_files[0].read_text(encoding="utf-8", errors="replace")
+                md_file.read_text(encoding="utf-8", errors="replace"),
+                base_dir=md_file.parent,
+                source_path=path,
             )
+        json_candidates: list[ParsedDocument] = []
         for jf in json_files:
             try:
                 content = json.loads(jf.read_text(encoding="utf-8", errors="replace"))
             except Exception:
                 continue
-            if isinstance(content, dict) and isinstance(content.get("content_list"), list):
-                doc = _mineru_json_to_document(content, base_dir=jf.parent)
-                if doc.pages:
-                    _persist_parser_assets(doc, work_dir=tmp, source_path=path)
-                    logger.info(
-                        "MinerU 解析完成: %s, %d 页 / %d 块 (json)",
-                        Path(path).name,
-                        len(doc.pages),
-                        len(doc.blocks),
-                    )
-                    return doc
+            payload = _mineru_content_payload(content)
+            if payload is None:
+                continue
+            doc = _mineru_json_to_document(payload, base_dir=jf.parent)
+            if doc.pages:
+                json_candidates.append(doc)
+        if json_candidates:
+            # 多个 JSON 时优先 block 更多、正文更完整的结果，避免误取中间状态文件。
+            doc = max(
+                json_candidates,
+                key=lambda candidate: (len(candidate.blocks), len(candidate.full_text)),
+            )
+            if image_analysis:
+                _supplement_missing_figure_images(
+                    doc,
+                    source_path=path,
+                    output_dir=tmp / "supplemental_figures",
+                )
+            _persist_parser_assets(doc, work_dir=tmp, source_path=path)
+            logger.info(
+                "MinerU 解析完成: %s, %d 页 / %d 块 (json)",
+                Path(path).name,
+                len(doc.pages),
+                len(doc.blocks),
+            )
+            return doc
         if md_doc and md_doc.pages:
-            logger.info("MinerU 解析完成: %s, 回退 Markdown", Path(path).name)
+            _persist_parser_assets(md_doc, work_dir=tmp, source_path=path)
+            image_count = sum(
+                1 for block in md_doc.blocks if block.block_type == "image"
+            )
+            logger.info(
+                "MinerU 解析完成: %s, 回退 Markdown (%d 个图片块)",
+                Path(path).name,
+                image_count,
+            )
             return md_doc
         logger.warning("MinerU 未产出可用文本: %s", Path(path).name)
         return None
@@ -1159,8 +1443,13 @@ def _parse_pdf_markpdfdown(
         markdown_files = [*tmp.rglob("*.md"), *tmp.rglob("*.markdown")]
         if markdown_files:
             best = max(markdown_files, key=lambda item: item.stat().st_size)
-            doc = _mineru_md_to_pages(best.read_text(encoding="utf-8", errors="replace"))
+            doc = _mineru_md_to_pages(
+                best.read_text(encoding="utf-8", errors="replace"),
+                base_dir=best.parent,
+                source_path=path,
+            )
             if doc.pages:
+                _persist_parser_assets(doc, work_dir=tmp, source_path=path)
                 logger.info("MarkPDFdown 解析完成: %s (markdown)", Path(path).name)
                 return doc
         logger.warning("MarkPDFdown 未产出可用 JSON/Markdown: %s", Path(path).name)

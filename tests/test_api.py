@@ -7,7 +7,7 @@ from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from src.dependencies import get_catalog_store, get_doc_store
+from src.dependencies import get_catalog_store, get_doc_store, get_vision_client
 from src.main import app
 from src.services import llm_providers as registry
 
@@ -202,6 +202,11 @@ class TestConfigAndProviders:
         ):
             assert key in ret
 
+    def test_config_exposes_llm_output_budget(self):
+        response = client.get("/api/v1/config")
+        assert response.status_code == 200
+        assert response.json()["data"]["llm"]["max_tokens"] >= 256
+
     def test_llm_providers_register_list(self, monkeypatch):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "llm_providers.json"
@@ -222,6 +227,65 @@ class TestConfigAndProviders:
             assert r.status_code == 200
             listed = client.get("/api/v1/llm-providers").json()["data"]
             assert any(p["name"] == "deepseek" for p in listed["items"])
+
+
+class TestVLMAPI:
+    class FakeVision:
+        model = "test-vlm"
+
+        def public_status(self):
+            return {
+                "configured": True,
+                "model": self.model,
+                "base_url": "https://vlm.example/v1",
+                "timeout": 30,
+                "protocol": "openai-compatible",
+                "supported_mime_types": ["image/png"],
+            }
+
+        def analyze_bytes(self, image, **kwargs):
+            assert image == b"fake-png"
+            assert kwargs["mime"] == "image/png"
+            assert kwargs["caption"] == "图 5.3-1"
+            assert kwargs["page"] == 13
+            return "4000 cm^-1 处反射率约为 28%，低于 40%。"
+
+    def test_status_does_not_expose_api_key(self):
+        app.dependency_overrides[get_vision_client] = self.FakeVision
+        try:
+            response = client.get("/api/v1/vlm/status")
+        finally:
+            app.dependency_overrides.pop(get_vision_client, None)
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["configured"] is True
+        assert "api_key" not in data
+
+    def test_analyze_image(self):
+        app.dependency_overrides[get_vision_client] = self.FakeVision
+        try:
+            response = client.post(
+                "/api/v1/vlm/analyze",
+                data={"caption": "图 5.3-1", "page": "13"},
+                files={"file": ("chart.png", BytesIO(b"fake-png"), "image/png")},
+            )
+        finally:
+            app.dependency_overrides.pop(get_vision_client, None)
+        assert response.status_code == 200
+        data = response.json()["data"]
+        assert data["model"] == "test-vlm"
+        assert "低于 40%" in data["analysis"]
+
+    def test_rejects_non_image(self):
+        app.dependency_overrides[get_vision_client] = self.FakeVision
+        try:
+            response = client.post(
+                "/api/v1/vlm/analyze",
+                files={"file": ("note.txt", BytesIO(b"text"), "text/plain")},
+            )
+        finally:
+            app.dependency_overrides.pop(get_vision_client, None)
+        assert response.status_code == 400
 
 
 class TestRootRedirect:

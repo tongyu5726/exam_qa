@@ -53,6 +53,11 @@ class TestSplitText:
 class TestChunkStructured:
     """MinerU 结构化分块：层级保留、表格独立、metadata 丰富。"""
 
+    @pytest.fixture(autouse=True)
+    def legacy_caption_mode(self, monkeypatch):
+        from src.config import config
+        monkeypatch.setattr(config.parsing, "visual_required", False)
+
     def _parsed(self):
         blocks = [
             ParsedBlock(block_type="header", text="信号与系统", page=1),
@@ -96,6 +101,8 @@ class TestChunkStructured:
         assert text_chunk["block_type"] == "text"
         assert "信源、信道和信宿" in text_chunk["text"]
         assert text_chunk["bbox"] == "10.00,40.00,500.00,150.00"
+        assert text_chunk["image_path"] == ""
+        assert text_chunk["image_caption"] == ""
 
     def test_table_standalone_with_headers(self):
         chunks = _chunk_structured(
@@ -114,6 +121,7 @@ class TestChunkStructured:
         )
         image_chunk = next(c for c in chunks if c["block_type"] == "image")
         assert "图片说明：图1-1 通信系统框图" in image_chunk["text"]
+        assert image_chunk["image_caption"] == "图1-1 通信系统框图"
 
     def test_header_footer_excluded_from_body(self):
         chunks = _chunk_structured(

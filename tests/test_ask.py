@@ -14,7 +14,14 @@ from src.dependencies import get_llm_client
 from src.main import app
 from src.services import generation
 from src.exceptions import LLMAPIException
-from src.services.query import CONCEPT_TOP_K, _citations, ask, ask_stream
+from src.services.query import (
+    CONCEPT_TOP_K,
+    _citations,
+    _retrieve,
+    _verify_visual_evidence,
+    ask,
+    ask_stream,
+)
 from src.services.storage.catalog_store import (
     DEFAULT_COLLEGE_ID,
     DEFAULT_COURSE_ID,
@@ -69,7 +76,103 @@ def test_citation_exposes_document_structure_provenance():
     assert citation.parse_quality == 0.91
 
 
+@pytest.mark.parametrize("block_type", ["image_summary", "image"])
+def test_visual_question_rechecks_the_original_chart(tmp_path, monkeypatch, block_type):
+    image = tmp_path / "chart.png"
+    image.write_bytes(b"image")
+
+    class FakeVision:
+        configured = True
+        model = "test-vlm"
+
+        def analyze_file(self, path, **kwargs):
+            assert Path(path) == image
+            assert "4000" in kwargs["prompt"]
+            assert kwargs["caption"] == "图 5.3-1 反射率曲线"
+            assert kwargs["page"] == 13
+            return "4000 cm^-1 处约 28%，低于 40%。"
+
+    monkeypatch.setattr("src.dependencies.get_vision_client", lambda: FakeVision())
+    hits = [
+        {
+            "id": "50_10",
+            "text": "图片说明：图 5.3-1 反射率曲线",
+            "score": 0.8,
+            "metadata": {
+                "doc_id": "50",
+                "block_type": block_type,
+                "image_path": str(image),
+                "image_caption": "图 5.3-1 反射率曲线",
+                "page": 13,
+            },
+        }
+    ]
+
+    enriched = _verify_visual_evidence("波数为 4000 时反射率高于还是低于 40%？", hits)
+
+    assert "针对当前问题的视觉复核" in enriched[0]["text"]
+    assert "低于 40%" in enriched[0]["text"]
+    assert hits[0]["text"] == "图片说明：图 5.3-1 反射率曲线"
+
+
+def test_visual_question_appends_dedicated_chart_recall(monkeypatch):
+    body = {
+        "id": "50_9",
+        "text": "5.3.3 检验测试结果",
+        "score": 0.9,
+        "metadata": {"doc_id": "50", "block_type": "text", "page": 13},
+    }
+    chart = {
+        "id": "50_10",
+        "text": "图片说明：图 5.3-1 反射率曲线",
+        "score": 0.7,
+        "metadata": {
+            "doc_id": "50",
+            "block_type": "image_summary",
+            "page": 13,
+        },
+    }
+    monkeypatch.setattr("src.services.query.retrieve", lambda **_kwargs: [body])
+    monkeypatch.setattr(
+        "src.services.query.retrieve_visual_evidence",
+        lambda *_args, **_kwargs: [chart],
+    )
+
+    hits = _retrieve(
+        "图 5.3-1 中 4000 cm^-1 的反射率高于还是低于 40%？",
+        "qa",
+        MagicMock(),
+        "course-default",
+    )
+
+    assert [hit["id"] for hit in hits] == ["50_9", "50_10"]
+
+
 class TestAskStream:
+    @pytest.fixture(autouse=True)
+    def isolated_vector_store(self, vector_store, tmp_path):
+        # 不复用先前 API 测试可能已关闭或移除目录的存储客户端。
+        from src.dependencies import get_vector_store, get_catalog_store, get_conversation_store
+        from src.services.storage.catalog_store import CatalogStore
+        from src.services.storage.conversation_store import ConversationStore
+        catalog = CatalogStore(str(tmp_path / "catalog.db"))
+        conversations = ConversationStore(str(tmp_path / "conversations.db"))
+        overrides = {get_vector_store: lambda: vector_store,
+                     get_catalog_store: lambda: catalog,
+                     get_conversation_store: lambda: conversations}
+        previous = {key: app.dependency_overrides.get(key) for key in overrides}
+        app.dependency_overrides.update(overrides)
+        try:
+            yield
+        finally:
+            for key, value in previous.items():
+                if value is None:
+                    app.dependency_overrides.pop(key, None)
+                else:
+                    app.dependency_overrides[key] = value
+            catalog.close()
+            conversations.close()
+
     def test_refusal_emits_done(self):
         with patch("src.services.query.retrieve", return_value=[]):
             with client.stream("POST", "/api/v1/ask", json=_ASK) as resp:

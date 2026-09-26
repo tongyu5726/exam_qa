@@ -6,6 +6,7 @@ import hashlib
 import logging
 import re
 import shutil
+import uuid
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -83,7 +84,8 @@ def _stage_copy(path: Path, content_hash: str, knowledge_dir: str) -> Path:
     """同路径覆盖时，将新文件复制为独立版本，避免复用旧 document 记录。"""
     versions_dir = Path(knowledge_dir) / ".versions"
     versions_dir.mkdir(parents=True, exist_ok=True)
-    destination = versions_dir / f"{content_hash[:16]}_{path.name}"
+    # 相同内容强制重建也必须是全新路径，不能复用历史 staging 文档记录。
+    destination = versions_dir / f"{content_hash[:16]}_{uuid.uuid4().hex[:12]}_{path.name}"
     if not destination.exists():
         shutil.copy2(path, destination)
     return destination
@@ -200,15 +202,26 @@ def ingest_or_update_pdf(
     )
 
     # 先激活新版再删除旧版，更新过程始终至少有一个版本可检索。
+    superseded_ids = sorted(
+        {
+            int(doc["id"])
+            for doc in candidates
+            if int(doc["id"]) != int(new_doc_id)
+        }
+        | {int(chosen["id"])}
+    )
     try:
         vs.set_active_by_doc_id(new_doc_id, True)
-        vs.delete_by_doc_id(str(chosen["id"]))
+        for old_doc_id in superseded_ids:
+            vs.delete_by_doc_id(str(old_doc_id))
     except Exception:
         vs.set_active_by_doc_id(new_doc_id, False)
         ds.update_status(int(new_doc_id), "failed", chunk_count=0)
         raise
 
     ds.promote_version(int(chosen["id"]), int(new_doc_id))
+    extra_ids = [doc_id for doc_id in superseded_ids if doc_id != int(chosen["id"])]
+    ds.supersede_many(extra_ids, int(new_doc_id))
     invalidate_bm25_cache(course_id)
     logger.info(
         "PDF 自动更新完成: %s v%s -> v%s (similarity=%s)",

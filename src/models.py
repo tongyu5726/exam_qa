@@ -195,6 +195,7 @@ class LLMPatch(BaseModel):
     api_key: str | None = None
     base_url: str | None = None
     model: str | None = None
+    max_tokens: int | None = Field(default=None, ge=256, le=131072)
     timeout: int | None = Field(default=None, ge=1)
 
 

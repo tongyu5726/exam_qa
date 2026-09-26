@@ -70,6 +70,19 @@ def test_same_path_update_stages_then_promotes(
     doc_store.update_status(old_id, "done", chunk_count=1)
     vector_store.upsert([_chunk(old_id, "旧版内容")], [[0.1] * 8])
 
+    # 模拟旧实现遗留的同名活跃副本；成功切换后也必须一并退出检索范围。
+    duplicate_path = Path(temp_dir) / "讲义_副本.pdf"
+    duplicate_path.write_bytes(b"older-pdf-content")
+    duplicate_id = doc_store.create(
+        "讲义.pdf",
+        str(duplicate_path.resolve()),
+        course=DEFAULT_COURSE_NAME,
+        course_id=DEFAULT_COURSE_ID,
+        logical_name="讲义",
+    )
+    doc_store.update_status(duplicate_id, "done", chunk_count=1)
+    vector_store.upsert([_chunk(duplicate_id, "更旧内容")], [[0.15] * 8])
+
     path.write_bytes(b"new-pdf-content")
 
     def fake_ingest(**kwargs):
@@ -103,8 +116,10 @@ def test_same_path_update_stages_then_promotes(
     assert result.action == "updated"
     assert result.previous_doc_id == str(old_id)
     old = doc_store.get(old_id)
+    duplicate = doc_store.get(duplicate_id)
     new = doc_store.get(int(result.doc_id))
     assert old["status"] == "superseded" and old["is_active"] == 0
+    assert duplicate["status"] == "superseded" and duplicate["is_active"] == 0
     assert new["version_number"] == 2 and new["is_active"] == 1
     hits = vector_store.search([0.2] * 8, course_id=DEFAULT_COURSE_ID)
     assert [hit["metadata"]["doc_id"] for hit in hits] == [str(new["id"])]

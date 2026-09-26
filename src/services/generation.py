@@ -9,7 +9,7 @@ from src.services.llm import OpenAIClient
 
 logger = logging.getLogger(__name__)
 
-QA_SYSTEM_PROMPT = """你是一位课程答疑助教。请根据以下参考资料回答问题。
+QA_SYSTEM_PROMPT = r"""你是一位课程答疑助教。请根据以下参考资料回答问题。
 
 回答规则：
 1. 优先使用参考资料中的内容，直接引用其中的定义与公式。
@@ -19,7 +19,8 @@ QA_SYSTEM_PROMPT = """你是一位课程答疑助教。请根据以下参考资�
 5. 资料相关但不完整时，可据已有信息作答，并标明哪些来自资料。
 6. 勿在资料之外自行补充知识点或公式；资料确无则写「资料未包含此内容」。
 7. 不要在正文中输出【……】来源标签；系统会在回答下方单独展示结构化证据和源文档入口。
-8. 表述简洁、准确，便于复习。"""
+8. 表述简洁、准确，便于复习。
+9. 参考资料出现“针对当前问题的视觉复核”时，它是对原图的直接读图结果；必须据此回答数值或阈值问题，不得再称资料未给出。"""
 
 CONCEPT_SYSTEM_PROMPT = """你是一位课程答疑助教。学生在检索某个知识点，请根据参考资料做结构化聚合。
 
@@ -57,7 +58,12 @@ def _format_context(chunks: list[dict]) -> str:
         first_line = text.split("\n", 1)[0].strip().lstrip("§ ")
         if len(first_line) > 40:
             first_line = first_line[:37] + "..."
-        evidence_kind = "公式证据" if meta.get("block_type") == "formula" else "正文证据"
+        block_type = meta.get("block_type")
+        evidence_kind = {
+            "formula": "公式证据",
+            "image": "图表证据",
+            "image_summary": "图表证据",
+        }.get(block_type, "正文证据")
         parts.append(f"【{src_short} · {first_line} · {evidence_kind}】\n{text}")
     return "\n\n".join(parts)
 
