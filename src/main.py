@@ -9,6 +9,7 @@ import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request
 from fastapi.exceptions import RequestValidationError
@@ -35,20 +36,12 @@ from src.services.storage.catalog_store import (
 )
 from src.utils.banner import StartupCheck, log_startup_banner
 from src.utils.logging import get_uvicorn_log_config, setup_logging
+from src.ui_build import ensure_ui_build
 
 logger = logging.getLogger(__name__)
 
 _WEB_ROOT = Path(__file__).resolve().parent.parent
-_WWW_DIR = _WEB_ROOT / "www"
-
-
-def _ui_ready(www_dir: Path | None = None) -> bool:
-    root = www_dir if www_dir is not None else _WWW_DIR
-    return (root / "sz" / "index.html").is_file()
-
-
-def _root_redirect_url(www_dir: Path | None = None) -> str:
-    return "/sz/" if _ui_ready(www_dir) else "/docs"
+_VUE_DIST_DIR = _WEB_ROOT / "www-dist"
 
 
 def _attach_file_handler() -> None:
@@ -89,6 +82,7 @@ async def lifespan(app: FastAPI):
     started = time.perf_counter()
     setup_logging(level=config.log_level)
     _attach_file_handler()
+    ensure_ui_build()
 
     config.validate()
     from src.services.llm_providers import ensure_seeded_from_env
@@ -127,7 +121,7 @@ async def lifespan(app: FastAPI):
     if env_was_created():
         logger.info("已从 .env.example 创建 .env，请按需填写 LLM_API_KEY")
 
-    ui_mounted = _ui_ready()
+    ui_mounted = (_VUE_DIST_DIR / "index.html").is_file()
     storage_root = Path(config.storage.chroma_path).expanduser().parent
 
     checks = [
@@ -156,7 +150,7 @@ async def lifespan(app: FastAPI):
         StartupCheck(
             "Web UI",
             "ok",
-            "www/sz/" if ui_mounted else "未挂载（API-only）",
+            "www-dist/" if ui_mounted else "未构建",
         ),
     ]
 
@@ -231,35 +225,31 @@ app.include_router(api_router, prefix=config.api_v1_prefix)
 
 @app.get("/")
 async def root():
-    return RedirectResponse(url=_root_redirect_url())
+    return RedirectResponse(url="/sz/")
 
 
-# ../shared from /sz| /sz-cfg resolves to /shared — must mount for CSS/JS modules
-_shared_dir = _WWW_DIR / "shared"
-if _shared_dir.is_dir():
-    app.mount("/shared", StaticFiles(directory=str(_shared_dir)), name="shared")
+@app.get("/sz-docs/")
+@app.get("/sz-docs")
+async def legacy_documents_redirect():
+    return RedirectResponse(url="/sz/#/documents")
 
-_sz_dir = _WWW_DIR / "sz"
-if (_sz_dir / "index.html").is_file():
-    app.mount("/sz", StaticFiles(directory=str(_sz_dir), html=True), name="sz")
 
-_sz_docs_dir = _WWW_DIR / "sz-docs"
-if (_sz_docs_dir / "index.html").is_file():
-    app.mount(
-        "/sz-docs", StaticFiles(directory=str(_sz_docs_dir), html=True), name="sz-docs"
-    )
+@app.get("/sz-bank/")
+@app.get("/sz-bank")
+async def legacy_bank_redirect(request: Request):
+    topic = request.query_params.get("topic", "")
+    suffix = f"?topic={quote(topic, safe='')}" if topic else ""
+    return RedirectResponse(url=f"/sz/#/question-bank{suffix}")
 
-_sz_bank_dir = _WWW_DIR / "sz-bank"
-if (_sz_bank_dir / "index.html").is_file():
-    app.mount(
-        "/sz-bank", StaticFiles(directory=str(_sz_bank_dir), html=True), name="sz-bank"
-    )
 
-_sz_cfg_dir = _WWW_DIR / "sz-cfg"
-if (_sz_cfg_dir / "index.html").is_file():
-    app.mount(
-        "/sz-cfg", StaticFiles(directory=str(_sz_cfg_dir), html=True), name="sz-cfg"
-    )
+@app.get("/sz-cfg/")
+@app.get("/sz-cfg")
+async def legacy_settings_redirect():
+    return RedirectResponse(url="/sz/#/settings")
+
+
+# Mount before lifespan so first startup can build the directory after app import.
+app.mount("/sz", StaticFiles(directory=str(_VUE_DIST_DIR), html=True, check_dir=False), name="sz")
 
 
 def _bind_check_host(host: str) -> str:

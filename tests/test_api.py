@@ -293,3 +293,23 @@ class TestRootRedirect:
         r = client.get("/", follow_redirects=False)
         assert r.status_code in (307, 302)
         assert r.headers["location"].endswith("/sz/")
+
+    def test_old_pages_are_removed(self):
+        for page in ("sz", "sz-docs", "sz-bank", "sz-cfg"):
+            response = client.get(f"/legacy/{page}/")
+            assert response.status_code == 404
+        assert client.get("/legacy/shared/css/tokens.css").status_code == 404
+
+    def test_vue_build_preserves_legacy_entry_points(self):
+        if not (Path(__file__).resolve().parent.parent / "www-dist" / "index.html").is_file():
+            pytest.skip("静态构建由服务启动时生成")
+        cases = {
+            "/sz-docs/": "/sz/#/documents",
+            "/sz-cfg/": "/sz/#/settings",
+            "/sz-bank/?topic=采样定理": "/sz/#/question-bank?topic=%E9%87%87%E6%A0%B7%E5%AE%9A%E7%90%86",
+        }
+        for old, target in cases.items():
+            response = client.get(old, follow_redirects=False)
+            assert response.status_code == 307
+            assert response.headers["location"] == target
+        assert client.get("/sz/").status_code == 200

@@ -29,10 +29,13 @@ htmlcov/
 # 原始资料与用户上传（运行时，非前端源码）
 data/
 
-# 前端：www/ 整树入库；只忽略构建垃圾
+# 前端源码位于 frontend/；构建产物不入库
 node_modules/
 **/node_modules/
 .vite/
+/www-dist/
+/frontend/dist/
+/.pnpm-store/
 *.tsbuildinfo
 
 # OS

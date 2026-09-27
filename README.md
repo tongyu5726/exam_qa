@@ -16,7 +16,7 @@
 
 ## 它做什么
 
-本地跑起来的课程资料问答：入库 → 按课隔离检索 → 带引用作答。前端在 `www/`（手写 HTML/CSS/JS，无构建），后端是 FastAPI + Chroma + SQLite。
+本地跑起来的课程资料问答：入库 → 按课隔离检索 → 带引用作答。前端是 `frontend/` 中的 Vue 3 单页应用，后端是 FastAPI + Chroma + SQLite。
 
 **使用边界：**默认仅监听 `127.0.0.1`。目前没有用户登录或访问鉴权，`course_id` 只用于课程数据隔离；请勿直接暴露到公网或不可信网络。配置远程 LLM / Embedding / 视觉服务后，相应问题、检索片段、待向量化文本或图片会发送给你选择的服务商；使用前确认资料允许这样处理。
 
@@ -43,7 +43,7 @@
 - 历史文档不会因为代码更新自动补摘要。确认允许将该资料的图片及所在整页发送到配置的视觉服务商后，再按课程使用 PDF 强制重建。需要重启服务加载代码。
 - 覆盖检测不是对有用图表的语义识别保证，VLM 返回摘要也不等于读数正确。特殊 PDF 绘制对象、低清图及密集多图须结合真实资料核验；离线替身测试不代表外部 API 已连通。
 
-需要 Python 3.11–3.13（默认 3.11）和 [uv](https://docs.astral.sh/uv/)。进入下载并解压后的项目根目录，再执行下面的命令。启动页面不需要 API Key；生成答案前需配置 OpenAI 兼容的对话 API。PDF 默认尝试可选的 MinerU，不可用时回退到内置 PyMuPDF；扫描版 PDF 的 OCR 需安装 [Tesseract](https://github.com/tesseract-ocr/tesseract) 及 `eng` / `chi_sim` 语言包。旧版 `.doc` 需 [LibreOffice](https://www.libreoffice.org/) 或 Windows 本机 Microsoft Word。
+需要 Python 3.11–3.13（默认 3.11）和 [uv](https://docs.astral.sh/uv/)。从源码启动还需 Node.js 20+ 与 pnpm；若发布包已包含 `www-dist/` 且不带 `frontend/` 源码，则无需前端构建工具。进入项目根目录执行下面的命令。启动时若前端产物缺失或源码较新，会自动按锁文件安装前端依赖并构建。启动页面不需要 API Key；生成答案前需配置 OpenAI 兼容的对话 API。PDF 默认尝试可选的 MinerU，不可用时回退到内置 PyMuPDF；扫描版 PDF 的 OCR 需安装 [Tesseract](https://github.com/tesseract-ocr/tesseract) 及 `eng` / `chi_sim` 语言包。旧版 `.doc` 需 [LibreOffice](https://www.libreoffice.org/) 或 Windows 本机 Microsoft Word。
 
 当前锁文件的主要目标平台为 Windows x64、Linux x64（glibc ≥ 2.28）和 Apple Silicon macOS ≥ 14。旧 macOS、Intel Mac、32 位系统及其他架构不保证可直接使用此锁文件；需另行选择兼容的 Torch 和依赖版本。已实测 Windows Python 3.11 的全新 CPU 安装、启动与单元测试；Linux/macOS 仅检查了依赖安装计划，尚未在这些系统上执行运行测试。
 
@@ -78,12 +78,15 @@ Windows 已有 `.venv` 时可直接执行 `./start.ps1`。它只调用现有 Pyt
 | 地址 | 用途 |
 |:-----|:-----|
 | [`/sz/`](http://127.0.0.1:8787/sz/) | 对话（自由问答 / 知识点 / 章节概览） |
-| [`/sz-docs/`](http://127.0.0.1:8787/sz-docs/) | 资料上传 / 扫描（可选强制重建） |
-| [`/sz-cfg/`](http://127.0.0.1:8787/sz-cfg/) | 设置（LLM、检索与 BGE 精排、OCR…） |
+| [`/sz/#/documents`](http://127.0.0.1:8787/sz/#/documents) | 资料上传 / 扫描（可选强制重建） |
+| [`/sz/#/question-bank`](http://127.0.0.1:8787/sz/#/question-bank) | 我的题库 |
+| [`/sz/#/settings`](http://127.0.0.1:8787/sz/#/settings) | 设置（LLM、检索与 BGE 精排、OCR…） |
 | [`/docs`](http://127.0.0.1:8787/docs) | OpenAPI |
 | [`/api/v1/health`](http://127.0.0.1:8787/api/v1/health) | 健康检查 |
 
 启动时会校验配置；资料入库请在资料页手动上传或扫描（启动不再自动扫库）。
+
+`/sz-docs/`、`/sz-bank/`、`/sz-cfg/` 旧链接会跳转到 Vue 对应页面。前端构建输出在被 Git 忽略的 `www-dist/`；构建失败会阻止服务启动并显示错误，避免返回缺失或过期页面。
 
 ## Commands
 
@@ -91,6 +94,8 @@ Windows 已有 `.venv` 时可直接执行 `./start.ps1`。它只调用现有 Pyt
 |:-----|:-----|
 | `uv sync --locked` | 首次安装基础依赖（会同步环境） |
 | `uv run --no-sync exam` | 使用已有环境启动服务（默认 `8787`） |
+| `cd frontend && pnpm dev` | 启动 Vue 开发服务（`127.0.0.1:5173/sz/`，API 代理到后端） |
+| `cd frontend && pnpm build` | 手动构建前端到 `www-dist/` |
 | `DEBUG=true uv run --no-sync exam` | Bash 调试模式；PowerShell 请设置 `$env:DEBUG='true'` |
 | `uv run --no-sync pytest -q` | 单元测试，隔离配置与存储 |
 | `uv run --no-sync pytest -q -m integration` | 集成测试；通过进程环境变量显式提供 Embedding / LLM 配置 |
@@ -107,10 +112,11 @@ curl http://127.0.0.1:8787/api/v1/health
 
 ```mermaid
 flowchart TB
-  subgraph browser["浏览器 · www/"]
-    SZ["sz/ 对话"]
-    DOCS["sz-docs/ 资料"]
-    CFG["sz-cfg/ 设置"]
+  subgraph browser["浏览器 · frontend/ Vue 3"]
+    SZ["/sz/#/chat 对话"]
+    DOCS["/sz/#/documents 资料"]
+    BANK["/sz/#/question-bank 题库"]
+    CFG["/sz/#/settings 设置"]
   end
 
   subgraph http["apis/v1/"]
@@ -183,14 +189,16 @@ exam-rag/
 ├── data/                    # 运行时（gitignore）：knowledge、llm_providers.json
 ├── storage/                 # 运行时（gitignore）：Chroma · meta.db · 日志
 ├── src/
-│   ├── main.py              # FastAPI · 挂载 www/
+│   ├── main.py              # FastAPI · 挂载 Vue 构建产物
+│   ├── ui_build.py          # 启动前按需构建 Vue
 │   ├── apis/v1/
 │   └── services/
-├── www/                     # 前端源码（入库）
-│   ├── shared/
-│   ├── sz/
-│   ├── sz-docs/
-│   └── sz-cfg/
+├── frontend/                # Vue 3 源码、静态字体和 pnpm 锁文件
+│   ├── src/features/        # 对话、资料、题库、设置
+│   ├── src/api/             # /api/v1 客户端
+│   ├── src/stores/          # 课程、会话、主题状态
+│   └── public/fonts/        # 自托管字体与许可证
+├── www-dist/                # Vite 构建产物（gitignore）
 ├── docs/
 └── tests/
 ```
@@ -375,18 +383,23 @@ POST /api/v1/ask
 
 ## Development
 
+### 近期开发记录
+
+- 解析和入库代码拆分到 `src/services/parsing_adapters/`、`ingestion_parts/`，公式与视觉处理及相关测试同步调整。
+- Vue 3 前端位于 `frontend/`，对话、资料、题库和设置按功能分目录；旧静态页面已移除，旧地址保留跳转。启动时检查并构建 `www-dist/`。
+
 | 约定 | 说明 |
 |:-----|:-----|
 | `apis/` | 只做 HTTP |
 | `services/` | 不 import FastAPI |
-| `www/` | 前端源码，随仓库提交 |
+| `frontend/` | Vue 源码和 `pnpm-lock.yaml` 随仓库提交；`www-dist/` 不提交 |
 | 新依赖 | `uv add <package>` |
 
 WSL 用户建议把项目与虚拟环境放在 Linux 文件系统，减少跨文件系统 I/O；Windows 原生运行不需要 WSL。
 
 测试使用临时 `.env`、资料目录、模型注册表和数据库，不读取或清理开发者的真实资料库；集成测试所需凭据须通过进程环境变量显式提供。默认单元测试不需要模型下载或外部 API。
 
-上传 GitHub 时提交源码、`www/`、测试、文档、`.env.example`、`pyproject.toml` 和 `uv.lock`。`.gitignore` 已排除 `.env`、`.venv`、`data/`、`storage/`、`.tmp/`、本地模型目录及 wheel 安装包。不要把整个本地文件夹压缩后上传，也不要使用 `git add -f` 绕过这些规则。
+上传 GitHub 时提交源码、`frontend/`（含 `pnpm-lock.yaml` 与字体许可证）、测试、文档、`.env.example`、`pyproject.toml` 和 `uv.lock`。`.gitignore` 已排除 `www-dist/`、`node_modules/`、`.env`、`.venv`、`data/`、`storage/`、`.tmp/`、本地模型目录及 wheel 安装包。不要使用 `git add -f` 绕过这些规则。
 
 ## Documentation
 

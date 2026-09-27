@@ -6,7 +6,7 @@
 ## 项目概览
 
 - 两条独立流水线：**入库**（上传 → 解析 → 分块 → 向量化 → 写入）与**查询**（检索 → 阈值 → 生成/拒答）。
-- 前端在 `www/`（手写 HTML/CSS/JS，无构建），只调 `/api/v1/*`；RAG 逻辑全部在 `src/services/`，不进 UI。
+- 前端在 `frontend/`（Vue 3 + Vite），只调 `/api/v1/*`；`www-dist/` 是被忽略的构建产物；RAG 逻辑全部在 `src/services/`，不进 UI。
 - 多课隔离：一切检索/上传/删除都带 `course_id`。
 
 ## 技术栈（不可随意更换）
@@ -23,7 +23,7 @@ uv run --no-sync pytest -q   # 单元测试（默认跳过 integration）
 uv run --no-sync pytest -q -m integration   # 集成测试（需显式传入 Embedding + LLM 环境变量）
 ```
 
-- 修改 `www/` 静态文件后刷新即可，无构建步骤。
+- 服务启动时按需执行 Vue 构建；前端开发在 `frontend/` 运行 `pnpm dev`，手动验证用 `pnpm lint && pnpm test && pnpm build`。提交源码和 `pnpm-lock.yaml`，不提交 `www-dist/`。
 - 已有定制 GPU Torch / Paddle / 外部解析器的环境，日常启动与测试使用 `--no-sync`；修改发布依赖时只解析锁文件，验证安装另建环境，保留本地 `.env`、资料和已安装包。
 - 环境要求：PDF 默认尝试外部 MinerU，不可用时回退 PyMuPDF 链路；扫描版 PDF 的回退 OCR 可选 Tesseract；旧版 `.doc` 转换需 LibreOffice 或本机 Word。
 

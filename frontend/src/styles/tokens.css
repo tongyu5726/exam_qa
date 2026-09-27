@@ -1,0 +1,46 @@
+:root {
+  /* 正文：霞鹜文楷（柔和）；控件拉丁可用 Nunito；字体随 Vue 构建发布 */
+  --sz-font: "LXGW WenKai", "Nunito", "PingFang SC", "Microsoft YaHei UI",
+    system-ui, sans-serif;
+  --sz-font-ui: "Nunito", "LXGW WenKai", "PingFang SC", "Microsoft YaHei UI",
+    system-ui, sans-serif;
+  --sz-font-brand: "KaiTi", "STKaiti", "Kaiti SC", "LXGW WenKai", serif;
+  --sz-radius-sm: 8px;
+  --sz-radius-md: 12px;
+  --sz-radius-lg: 16px;
+  --sz-docs-width: 260px;
+  --sz-cfg-nav-width: 220px;
+  --sz-splitter: 5px;
+  --sz-accent: #2a9d8f;
+  --sz-on-accent: #ffffff;
+  --sz-success: #2da44e;
+  --sz-warning: #d4a017;
+  --sz-danger: #cf222e;
+  --sz-bg-base: #f7f5f0;
+  --sz-bg-panel: #ffffff;
+  --sz-bg-surface: #f3f1eb;
+  --sz-text: #0c1118;
+  --sz-text-muted: #4f5b69;
+  --sz-border: #e2e6eb;
+}
+
+:root[data-theme="dark"] {
+  --sz-accent: #4ecdc4;
+  --sz-on-accent: #0c1118;
+  --sz-success: #3fb950;
+  --sz-warning: #e3b341;
+  --sz-danger: #f85149;
+  --sz-bg-base: #0e1412;
+  --sz-bg-panel: #151b18;
+  --sz-bg-surface: #121916;
+  --sz-text: #e8eaed;
+  --sz-text-muted: #aeb8c2;
+  --sz-border: #252b35;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
