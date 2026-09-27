@@ -163,7 +163,7 @@ def _load_local_with_progress(client: LocalEmbeddingClient, *, gen: int) -> None
     try:
         _set_progress(
             phase="running",
-            percent=0,
+            percent=None,
             message=f"拉取 {client.model}…",
             error=None,
             provider=client.provider,
@@ -244,7 +244,7 @@ def start_warmup_background(client: EmbeddingClient) -> dict[str, Any]:
         _progress.update(
             {
                 "phase": "running",
-                "percent": 0 if client.provider == "local" else None,
+                "percent": None,
                 "message": "开始拉取…" if client.provider == "local" else "探测中…",
                 "error": None,
                 "provider": client.provider,
@@ -321,6 +321,10 @@ class LocalEmbeddingClient:
             gen=gen,
         )
 
+        from src.services.http_client import configure_hf_http_client
+
+        configure_hf_http_client()
+
         def _fit() -> None:
             reset_hf_http_session()
             self._model = load_torch_model(SentenceTransformer, self.model, self.device)
@@ -329,7 +333,7 @@ class LocalEmbeddingClient:
             _fit()
         except Exception as first:
             # 代理未开 / 会话被关：直连再试一次（镜像站通常不需要本地 7890）
-            if app_config.proxy.active_url and is_proxy_or_conn_error(first):
+            if app_config.proxy.active_hf_url and is_proxy_or_conn_error(first):
                 logger.warning(
                     "经代理拉取失败（%s），改为直连重试…",
                     first.__class__.__name__,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from urllib.parse import urlsplit
+
 from fastapi import APIRouter, Depends, Request
 from starlette import status
 
@@ -19,6 +21,16 @@ from src.services.env_store import (
 from src.services.settings_apply import build_settings_effects
 
 router = APIRouter(prefix="/config", tags=["config"])
+
+
+def _mirror_url(value: str, *, prefix: bool) -> str:
+    value = value.strip()
+    if not value:
+        return ""
+    parsed = urlsplit(value)
+    if parsed.scheme not in ("https", "http") or not parsed.hostname or parsed.username or parsed.password or parsed.query or parsed.fragment:
+        raise BadRequestException("镜像地址须为不含账号、查询参数的 HTTP(S) URL")
+    return f"{value.rstrip('/')}/" if prefix else value.rstrip("/")
 
 
 def _config_path_label() -> str:
@@ -116,6 +128,10 @@ def _build_config_data(request: Request) -> dict:
             "url": config.proxy.url,
             "no_proxy": config.proxy.no_proxy,
             "enabled": config.proxy.enabled,
+            "hf_url": config.proxy.hf_url,
+            "github_url": config.proxy.github_url,
+            "hf_endpoint": config.proxy.hf_endpoint,
+            "github_mirror_url": config.proxy.github_mirror_url,
         },
         "meta": {
             "config_path": _config_path_label(),
@@ -317,6 +333,14 @@ def _patch_to_env(body: ConfigUpdateRequest) -> tuple[dict[str, str], list[str]]
             updates["NO_PROXY"] = p["no_proxy"].strip()
         if "enabled" in p:
             updates["PROXY_ENABLED"] = "true" if p["enabled"] else "false"
+        if "hf_url" in p:
+            updates["HF_PROXY_URL"] = p["hf_url"].strip()
+        if "github_url" in p:
+            updates["GITHUB_PROXY_URL"] = p["github_url"].strip()
+        if "hf_endpoint" in p:
+            updates["HF_ENDPOINT"] = _mirror_url(p["hf_endpoint"], prefix=False)
+        if "github_mirror_url" in p:
+            updates["GITHUB_MIRROR_URL"] = _mirror_url(p["github_mirror_url"], prefix=True)
 
     return updates, patched
 
@@ -355,4 +379,7 @@ async def patch_config(
 
     data = _build_config_data(request)
     data["settings_effects"] = build_settings_effects(patched)
+    if "HF_ENDPOINT" in updates:
+        data["settings_effects"]["restart_required"].append("Hugging Face 下载镜像")
+        data["settings_effects"]["notes"].append("重启服务后，新启动的 Hugging Face 模型下载会使用所选镜像。")
     return {"code": status.HTTP_200_OK, "data": data}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from contextlib import contextmanager
 from typing import Iterator
+from urllib.parse import urlsplit
 
 import httpx
 
@@ -40,6 +41,39 @@ def create_openai_http_client(timeout: float) -> httpx.Client:
     return httpx.Client(proxy=proxy, timeout=timeout, trust_env=False)
 
 
+def proxy_for_url(url: str, proxy: ProxyConfig | None = None) -> str:
+    """按目标站点选代理，专用地址优先；空串表示直连。"""
+    p = proxy if proxy is not None else config.proxy
+    host = (urlsplit(url).hostname or "").lower()
+    if host in {"huggingface.co", "hf.co"} or host.endswith(".huggingface.co"):
+        return p.active_hf_url
+    if host in {"github.com", "api.github.com", "raw.githubusercontent.com", "objects.githubusercontent.com"} or host.endswith(".githubusercontent.com"):
+        return p.active_github_url
+    return p.active_url
+
+
+def configure_hf_http_client(*, use_proxy: bool = True) -> None:
+    """为 huggingface_hub 设置下载代理；通用代理仍由环境变量处理。"""
+    from huggingface_hub import set_client_factory
+    from huggingface_hub.utils._http import default_client_factory, hf_request_event_hook
+
+    proxy_url = config.proxy.active_hf_url if use_proxy else ""
+    if not proxy_url:
+        set_client_factory(default_client_factory)
+        return
+
+    def client_factory() -> httpx.Client:
+        return httpx.Client(
+            proxy=proxy_url,
+            timeout=None,
+            follow_redirects=True,
+            trust_env=False,
+            event_hooks={"request": [hf_request_event_hook]},
+        )
+
+    set_client_factory(client_factory)
+
+
 def reset_hf_http_session() -> None:
     """丢弃 huggingface_hub 全局 httpx 客户端（避免 retry 时 Client closed）。"""
     try:
@@ -70,14 +104,14 @@ def is_proxy_or_conn_error(exc: BaseException) -> bool:
 
 def format_hf_download_error(exc: BaseException) -> str:
     """给设置页看的短错误；附带可操作提示。"""
-    proxy = config.proxy.active_url
+    proxy = config.proxy.active_hf_url
     endpoint = (os.getenv("HF_ENDPOINT") or "https://huggingface.co").rstrip("/")
     base = str(exc).strip() or exc.__class__.__name__
     if "10061" in base or "积极拒绝" in base or "connection refused" in base.lower():
         if proxy:
             return (
                 f"无法连接下载源（当前代理 {proxy} 可能未启动）。"
-                f"请打开 Clash/V2Ray，或在设置里关闭代理后重试；"
+                f"请检查代理软件，或在设置里修改相应代理地址后重试；"
                 f"也可改 HF_ENDPOINT（现为 {endpoint}）。"
             )
         return (
@@ -98,7 +132,7 @@ def without_process_proxy() -> Iterator[None]:
     try:
         for key in _PROXY_ENV_KEYS:
             os.environ.pop(key, None)
-        reset_hf_http_session()
+        configure_hf_http_client(use_proxy=False)
         yield
     finally:
         for key, val in saved.items():
@@ -107,4 +141,4 @@ def without_process_proxy() -> Iterator[None]:
             else:
                 os.environ[key] = val
         apply_proxy_env(config.proxy)
-        reset_hf_http_session()
+        configure_hf_http_client()

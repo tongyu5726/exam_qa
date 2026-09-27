@@ -38,17 +38,29 @@ def _proxy_enabled_default() -> bool:
 
 @dataclass
 class ProxyConfig:
-    """出站 HTTP 代理。PROXY_URL 同时用于 HTTP/HTTPS（LLM、Embedding、Hugging Face 下载）。"""
+    """出站 HTTP 代理；站点专用地址优先于通用代理。"""
 
     url: str = field(default_factory=lambda: os.getenv("PROXY_URL", "").strip())
     no_proxy: str = field(
         default_factory=lambda: os.getenv("NO_PROXY", "127.0.0.1,localhost").strip()
     )
     enabled: bool = field(default_factory=_proxy_enabled_default)
+    hf_url: str = field(default_factory=lambda: os.getenv("HF_PROXY_URL", "").strip())
+    github_url: str = field(default_factory=lambda: os.getenv("GITHUB_PROXY_URL", "").strip())
+    hf_endpoint: str = field(default_factory=lambda: os.getenv("HF_ENDPOINT", "").strip())
+    github_mirror_url: str = field(default_factory=lambda: os.getenv("GITHUB_MIRROR_URL", "").strip())
 
     @property
     def active_url(self) -> str:
         return self.url if self.enabled and self.url else ""
+
+    @property
+    def active_hf_url(self) -> str:
+        return self.hf_url or self.active_url
+
+    @property
+    def active_github_url(self) -> str:
+        return self.github_url or self.active_url
 
 
 @dataclass
@@ -341,5 +353,8 @@ def reload_config() -> AppConfig:
     for name in config.__dataclass_fields__:
         setattr(config, name, getattr(fresh, name))
     apply_proxy_env(config.proxy)
+    from src.services.http_client import configure_hf_http_client
+
+    configure_hf_http_client()
     apply_log_level(config.log_level)
     return config

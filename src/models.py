@@ -239,6 +239,7 @@ class ParsingPatch(BaseModel):
     formula_recognition_enabled: bool | None = None
     formula_recognition_device: str | None = None
     formula_recognition_model: str | None = None
+    formula_recognition_enable_mkldnn: bool | None = None
     markpdfdown_enabled: bool | None = None
     markpdfdown_cmd: str | None = None
     markpdfdown_args: str | None = None
@@ -272,6 +273,10 @@ class ProxyPatch(BaseModel):
     url: str | None = None
     no_proxy: str | None = None
     enabled: bool | None = None
+    hf_url: str | None = None
+    github_url: str | None = None
+    hf_endpoint: str | None = None
+    github_mirror_url: str | None = None
 
 
 class ConfigUpdateRequest(BaseModel):
