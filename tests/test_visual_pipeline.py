@@ -55,7 +55,7 @@ def test_summary_context_storage_and_query(vector_store, tmp_path, monkeypatch):
 
 def test_missing_summary_blocks_success(monkeypatch):
     monkeypatch.setattr(config.parsing, "visual_required", True)
-    monkeypatch.setattr("src.services.parsing._summarize_image", lambda *a: None)
+    monkeypatch.setattr("src.services.parsing_adapters.enrichment.vision._summarize_image", lambda *a: None)
     with pytest.raises(BadRequestException, match="未完成 VLM"):
         _chunk_structured(ParsedDocument([], [ParsedBlock("image", "", 1)]), chunk_size=800, chunk_overlap=20)
 
@@ -65,7 +65,7 @@ def test_every_image_and_uncaptioned_image_gets_summary(monkeypatch):
     def summarize(path, caption, page, context):
         calls.append(path)
         return "视觉事实"
-    monkeypatch.setattr("src.services.parsing._summarize_image", summarize)
+    monkeypatch.setattr("src.services.parsing_adapters.enrichment.vision._summarize_image", summarize)
     rows = _chunk_structured(ParsedDocument([], [ParsedBlock("image", "", 1, image_path=str(i), content_role="annotation") for i in range(3)]),
                              chunk_size=800, chunk_overlap=20)
     assert calls == ["0", "1", "2"]
@@ -105,7 +105,7 @@ def test_visual_failure_keeps_old_index(tmp_path, vector_store, doc_store, monke
     vector_store.upsert([dict(doc_id=str(old), source_file=path.name, course_id="test", course="test",
                              chunk_index=0, text="old evidence")], [[1., 0., 0., 0.]])
     monkeypatch.setattr(config.parsing, "visual_required", True)
-    monkeypatch.setattr("src.services.parsing._summarize_image", lambda *a: None)
+    monkeypatch.setattr("src.services.parsing_adapters.enrichment.vision._summarize_image", lambda *a: None)
     with pytest.raises(BadRequestException):
         ingest_file(str(path), vector_store, doc_store, course_id="test",
                     parsed_document=ParsedDocument([], [ParsedBlock("image", "", 1)]))

@@ -101,11 +101,11 @@ def test_embedding_and_reranker_receive_configured_device(monkeypatch):
 
 
 def test_windows_auto_formula_uses_isolated_worker(monkeypatch):
-    from src.services import parsing
+    from src.services.parsing_adapters.enrichment import formula
 
-    monkeypatch.setattr(parsing, "os", SimpleNamespace(name="nt"))
-    monkeypatch.setattr(parsing.config.parsing, "formula_recognition_device", "auto")
+    monkeypatch.setattr(formula, "os", SimpleNamespace(name="nt"))
+    monkeypatch.setattr(formula.config.parsing, "formula_recognition_device", "auto")
     worker = Mock(return_value=[{"rec_formula": "x^2"}])
-    monkeypatch.setattr(parsing, "_run_formula_worker", worker)
-    assert parsing._run_formula_pipeline("test.pdf") == [{"rec_formula": "x^2"}]
+    monkeypatch.setattr(formula, "_run_formula_worker", worker)
+    assert formula._run_formula_pipeline("test.pdf") == [{"rec_formula": "x^2"}]
     worker.assert_called_once_with("test.pdf")

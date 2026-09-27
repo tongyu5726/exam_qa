@@ -53,7 +53,7 @@ def main() -> int:
     importlib.util.find_spec = find_spec_without_torch
     from paddleocr import FormulaRecognitionPipeline
 
-    from src.services.parsing import _paddle_result_payloads
+    from src.services.parsing_adapters.enrichment.formula import _paddle_result_payloads
     from src.services.inference_device import resolve_paddle_device
 
     pipeline = FormulaRecognitionPipeline(

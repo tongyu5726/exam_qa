@@ -9,6 +9,14 @@ import pytest
 
 from src.exceptions import BadRequestException, UnsupportedFormatException
 from src.services.parsing import parse_file
+from src.config import config
+from src.services.parsing_adapters import blocks
+from src.services.parsing_adapters.enrichment import formula
+from src.services.parsing_adapters.office import doc_adapter
+from src.services.parsing_adapters.office import pptx_adapter as pptx
+from src.services.parsing_adapters.pdf import mineru_adapter as mineru
+from src.services.parsing_adapters.pdf import quality, strategy
+from src.services.parsing_adapters.pdf import markpdfdown_adapter as markpdfdown
 
 
 class TestParsePlain:
@@ -19,6 +27,23 @@ class TestParsePlain:
 
     def test_parse_txt(self, sample_txt_file):
         assert "纯文本" in parse_file(sample_txt_file).full_text
+
+    def test_markdown_headings_reach_chapter_inference(self, temp_dir):
+        from src.services.ingestion_parts.chapters import assign_chapters
+
+        path = temp_dir / "lesson.md"
+        path.write_bytes("# 第一章 信号\n\n## 采样\n\n采样定理正文。".encode("gbk"))
+        parsed = parse_file(str(path))
+        assert parsed.parser_name == "md"
+        assert "## 采样" in parsed.full_text
+        assert assign_chapters(parsed.full_text, ["采样定理正文。"]) == ["第一章 信号"]
+
+    def test_txt_gbk_decoding(self, temp_dir):
+        path = temp_dir / "notes.txt"
+        path.write_bytes("课程纯文本".encode("gbk"))
+        parsed = parse_file(str(path))
+        assert parsed.parser_name == "txt"
+        assert parsed.full_text == "课程纯文本"
 
     def test_empty_and_unsupported(self, temp_dir):
         empty = temp_dir / "empty.txt"
@@ -39,10 +64,33 @@ class TestParseOffice:
         doc = Document()
         doc.add_heading("傅里叶变换", level=1)
         doc.add_paragraph("连续时间傅里叶变换的定义。")
+        table = doc.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "变量"
+        table.cell(0, 1).text = "频率"
         doc.save(str(path))
         parsed = parse_file(str(path))
         assert "傅里叶变换" in parsed.full_text
         assert "连续时间" in parsed.full_text
+        assert "变量 | 频率" in parsed.full_text
+
+    def test_legacy_doc_uses_word_conversion_and_cleans_temporary_file(
+        self, temp_dir, monkeypatch
+    ):
+        from docx import Document
+
+        source = temp_dir / "legacy.doc"
+        source.write_bytes(b"legacy document")
+        converted = temp_dir / "converted.docx"
+        word = Document()
+        word.add_heading("第二章 编码", level=1)
+        word.add_paragraph("信道编码正文。")
+        word.save(converted)
+        monkeypatch.setattr(doc_adapter, "_convert_doc_to_docx", lambda _: converted)
+
+        parsed = parse_file(str(source))
+        assert parsed.parser_name == "doc"
+        assert "信道编码正文" in parsed.full_text
+        assert not converted.exists()
 
     @pytest.mark.integration
     def test_parse_pptx(self, temp_dir):
@@ -70,7 +118,7 @@ class TestParseOffice:
         slide.shapes.title.text = "回退测试"
         prs.save(str(path))
 
-        monkeypatch.setattr(parsing, "_convert_pptx_to_pdf", lambda p: None)
+        monkeypatch.setattr(pptx, "_convert_pptx_to_pdf", lambda p: None)
         parsed = parse_file(str(path))
         assert "回退测试" in parsed.full_text
         assert parsed.pages[0].page == 1
@@ -95,7 +143,7 @@ class TestMineruMapping:
                 {"type": "image", "page_idx": 1},
             ]
         }
-        doc = parsing._mineru_json_to_pages(content)
+        doc = mineru._mineru_json_to_pages(content)
         assert len(doc.pages) == 2
         assert doc.pages[0].page == 1
         assert "第一章" in doc.pages[0].text
@@ -105,7 +153,7 @@ class TestMineruMapping:
     def test_md_fallback_single_page(self):
         from src.services import parsing
 
-        doc = parsing._mineru_md_to_pages("## 标题\n正文")
+        doc = mineru._mineru_md_to_pages("## 标题\n正文")
         assert len(doc.pages) == 1
         assert doc.pages[0].page is None
         assert "正文" in doc.full_text
@@ -113,7 +161,7 @@ class TestMineruMapping:
     def test_html_table_to_text(self):
         from src.services import parsing
 
-        out = parsing._html_table_to_text(
+        out = mineru._html_table_to_text(
             "<table><tr><td>a</td><td>b</td></tr><tr><td>1</td><td>2</td></tr></table>"
         )
         assert "a | b" in out
@@ -129,21 +177,21 @@ class TestPdfQualityAndFallback:
             [parsing.ParsedPage(page=1, text="测" * 200)],
             [parsing.ParsedBlock(block_type="title", text="标题", page=1)],
         )
-        assert parsing._assess_pdf_quality(
+        assert quality._assess_pdf_quality(
             structured, expected_pages=1
-        ).score > parsing._assess_pdf_quality(sparse, expected_pages=1).score
+        ).score > quality._assess_pdf_quality(sparse, expected_pages=1).score
 
     def test_markpdfdown_template_requires_input_and_output(self, tmp_path):
         from src.services import parsing
 
-        assert parsing._markpdfdown_command(
+        assert markpdfdown._markpdfdown_command(
             "markpdfdown",
             "--input {input}",
             path="sample.pdf",
             output_dir=tmp_path,
             output_file=tmp_path / "document.md",
         ) is None
-        args = parsing._markpdfdown_command(
+        args = markpdfdown._markpdfdown_command(
             "markpdfdown",
             '--input "{input}" --output "{output_file}"',
             path="sample.pdf",
@@ -159,9 +207,9 @@ class TestPdfQualityAndFallback:
         from src.services import parsing
 
         calls = []
-        monkeypatch.setattr(parsing, "_pdf_kind", lambda path: "scanned")
-        monkeypatch.setattr(parsing, "_pdf_page_count", lambda path: 1)
-        monkeypatch.setattr(parsing, "_mineru_available", lambda cmd: True)
+        monkeypatch.setattr(strategy, "_pdf_kind", lambda path: "scanned")
+        monkeypatch.setattr(strategy, "_pdf_page_count", lambda path: 1)
+        monkeypatch.setattr(strategy, "_mineru_available", lambda cmd: True)
 
         def fake_mineru(path, **kwargs):
             calls.append(kwargs["effort"])
@@ -172,12 +220,12 @@ class TestPdfQualityAndFallback:
                 [parsing.ParsedBlock(block_type="table", text="识别表格", page=1)],
             )
 
-        monkeypatch.setattr(parsing, "_parse_pdf_mineru", fake_mineru)
-        monkeypatch.setattr(parsing.config.parsing, "pdf_parser", "mineru")
-        monkeypatch.setattr(parsing.config.parsing, "mineru_effort", "medium")
-        monkeypatch.setattr(parsing.config.parsing, "mineru_retry_high", True)
-        monkeypatch.setattr(parsing.config.parsing, "pdf_quality_threshold", 0.55)
-        doc = parsing._parse_pdf("sample.pdf")
+        monkeypatch.setattr(strategy, "_parse_pdf_mineru", fake_mineru)
+        monkeypatch.setattr(config.parsing, "pdf_parser", "mineru")
+        monkeypatch.setattr(config.parsing, "mineru_effort", "medium")
+        monkeypatch.setattr(config.parsing, "mineru_retry_high", True)
+        monkeypatch.setattr(config.parsing, "pdf_quality_threshold", 0.55)
+        doc = strategy._parse_pdf("sample.pdf")
         assert calls == ["medium", "high"]
         assert "识别结果" in doc.full_text
 
@@ -187,7 +235,7 @@ class TestPdfQualityAndFallback:
         from src.services import parsing
 
         captured = []
-        monkeypatch.setattr(parsing, "_mineru_available", lambda cmd: True)
+        monkeypatch.setattr(mineru, "_mineru_available", lambda cmd: True)
 
         def fake_run(args, *, timeout=None, encoding="utf-8"):
             captured.extend(args)
@@ -200,8 +248,8 @@ class TestPdfQualityAndFallback:
             )
             return SimpleNamespace(returncode=0), "", ""
 
-        monkeypatch.setattr(parsing, "_run_capture", fake_run)
-        doc = parsing._parse_pdf_mineru(
+        monkeypatch.setattr(mineru, "_run_capture", fake_run)
+        doc = mineru._parse_pdf_mineru(
             "sample.pdf",
             cmd="mineru",
             backend="hybrid-engine",
@@ -250,7 +298,7 @@ class TestMineruStructure:
     def test_structure_restored(self, tmp_path):
         from src.services import parsing
 
-        doc = parsing._mineru_json_to_document(
+        doc = mineru._mineru_json_to_document(
             self._content(tmp_path), base_dir=tmp_path
         )
         assert doc.has_blocks
@@ -263,7 +311,7 @@ class TestMineruStructure:
 
         table = next(b for b in doc.blocks if b.block_type == "table")
         assert table.html and "名称" in table.html
-        assert parsing._table_headers(table.html) == "名称 | 说明"
+        assert mineru._table_headers(table.html) == "名称 | 说明"
         assert table.page == 2
 
         image = next(b for b in doc.blocks if b.block_type == "image")
@@ -281,18 +329,18 @@ class TestMineruStructure:
         from src.services import parsing
 
         assert (
-            parsing._table_headers(
+            mineru._table_headers(
                 "<table><tr><th>信源</th><th>编码</th></tr><tr><td>a</td><td>b</td></tr></table>"
             )
             == "信源 | 编码"
         )
-        assert parsing._table_headers("<table><tr><td>a</td></tr></table>") == ""
+        assert mineru._table_headers("<table><tr><td>a</td></tr></table>") == ""
 
     def test_handwritten_formula_reference_and_noise_roles(self, tmp_path):
         """复杂笔记中的公式、教材页码、批注和手机状态栏必须被区别对待。"""
         from src.services import parsing
 
-        doc = parsing._mineru_json_to_document(
+        doc = mineru._mineru_json_to_document(
             {
                 "content_list": [
                     {"type": "text", "page_idx": 0, "text": "P28 Ex2"},
@@ -332,13 +380,13 @@ class TestMineruStructure:
         image = work_dir / "crop.png"
         image.write_bytes(b"image bytes")
         assets = tmp_path / "persisted-assets"
-        monkeypatch.setattr(parsing.config.storage, "parsed_assets_dir", str(assets))
+        monkeypatch.setattr(config.storage, "parsed_assets_dir", str(assets))
         doc = parsing.ParsedDocument(
             pages=[],
             blocks=[parsing.ParsedBlock(block_type="image", text="", page=1, image_path=str(image))],
         )
 
-        parsing._persist_parser_assets(doc, work_dir=work_dir, source_path=str(source))
+        blocks._persist_parser_assets(doc, work_dir=work_dir, source_path=str(source))
         shutil.rmtree(work_dir)
 
         persisted = Path(doc.blocks[0].image_path)
@@ -374,8 +422,8 @@ class TestMineruStructure:
 """
 
         # PyMuPDF 的测试页不含中文字体，单独验证页码搜索函数的 1-based 语义。
-        monkeypatch.setattr(parsing, "_pdf_page_for_caption", lambda *_args: 2)
-        doc = parsing._mineru_md_to_pages(
+        monkeypatch.setattr(mineru, "_pdf_page_for_caption", lambda *_args: 2)
+        doc = mineru._mineru_md_to_pages(
             markdown,
             base_dir=tmp_path,
             source_path=str(source),
@@ -395,8 +443,8 @@ class TestMineruStructure:
         source = tmp_path / "paper.pdf"
         source.write_bytes(b"fake-pdf")
         assets = tmp_path / "assets"
-        monkeypatch.setattr(parsing.config.storage, "parsed_assets_dir", str(assets))
-        monkeypatch.setattr(parsing, "_mineru_available", lambda _cmd: True)
+        monkeypatch.setattr(config.storage, "parsed_assets_dir", str(assets))
+        monkeypatch.setattr(mineru, "_mineru_available", lambda _cmd: True)
 
         def fake_run(args, **_kwargs):
             output = Path(args[args.index("-o") + 1]) / "paper"
@@ -408,8 +456,8 @@ class TestMineruStructure:
             )
             return types.SimpleNamespace(returncode=0), "", ""
 
-        monkeypatch.setattr(parsing, "_run_capture", fake_run)
-        doc = parsing._parse_pdf_mineru(str(source))
+        monkeypatch.setattr(mineru, "_run_capture", fake_run)
+        doc = mineru._parse_pdf_mineru(str(source))
 
         image = next(block for block in doc.blocks if block.block_type == "image")
         assert Path(image.image_path).is_file()
@@ -443,7 +491,7 @@ class TestMineruStructure:
         )
         output = tmp_path / "mineru-output" / "supplemental"
 
-        count = parsing._supplement_missing_figure_images(
+        count = mineru._supplement_missing_figure_images(
             document,
             source_path=str(source),
             output_dir=output,
@@ -482,7 +530,7 @@ class TestMineruStructure:
         )
         output = tmp_path / "mineru-output" / "supplemental"
 
-        count = parsing._supplement_missing_figure_images(
+        count = mineru._supplement_missing_figure_images(
             document,
             source_path=str(source),
             output_dir=output,
@@ -497,7 +545,7 @@ class TestMineruStructure:
     def test_paddle_formula_payloads_keep_page_and_bbox(self):
         from src.services import parsing
 
-        payloads = parsing._paddle_result_payloads(
+        payloads = formula._paddle_result_payloads(
             {
                 "page_idx": 2,
                 "formulas": [
@@ -511,15 +559,15 @@ class TestMineruStructure:
         assert len(payloads) == 1
         assert payloads[0]["_page"] == 3
         assert payloads[0]["_formula_latex"] == r"\frac{n}{n+1}"
-        assert parsing._formula_bbox(payloads[0]["polygon"]) == (10.0, 20.0, 110.0, 60.0)
+        assert formula._formula_bbox(payloads[0]["polygon"]) == (10.0, 20.0, 110.0, 60.0)
 
     def test_paddle_formula_page_index_is_zero_based_but_page_is_one_based(self):
         from src.services import parsing
 
-        by_index = parsing._paddle_result_payloads(
+        by_index = formula._paddle_result_payloads(
             {"page_index": 4, "formulas": [{"rec_formula": r"n=\sqrt{\varepsilon_r}"}]}
         )
-        by_page = parsing._paddle_result_payloads(
+        by_page = formula._paddle_result_payloads(
             {"page": 5, "formulas": [{"rec_formula": r"\varepsilon_r=n^2"}]}
         )
 
@@ -549,14 +597,14 @@ class TestMineruStructure:
             "paddleocr",
             types.SimpleNamespace(FormulaRecognitionPipeline=FakePipeline),
         )
-        monkeypatch.setattr(parsing.config.parsing, "formula_recognition_enabled", True)
-        monkeypatch.setattr(parsing.config.parsing, "formula_recognition_device", "cpu")
+        monkeypatch.setattr(config.parsing, "formula_recognition_enabled", True)
+        monkeypatch.setattr(config.parsing, "formula_recognition_device", "cpu")
         monkeypatch.setattr(
-            parsing.config.parsing, "formula_recognition_enable_mkldnn", False
+            config.parsing, "formula_recognition_enable_mkldnn", False
         )
         doc = parsing.ParsedDocument([parsing.ParsedPage(page=1, text="论文正文")])
 
-        enriched = parsing._enrich_document_with_formulas(doc, "paper.pdf")
+        enriched = formula._enrich_document_with_formulas(doc, "paper.pdf")
 
         assert enriched is not None
         assert [block.block_type for block in enriched.blocks] == ["text", "formula"]
@@ -591,8 +639,8 @@ class TestMineruStructure:
             "paddleocr",
             types.SimpleNamespace(FormulaRecognitionPipeline=FakePipeline),
         )
-        monkeypatch.setattr(parsing.config.parsing, "formula_recognition_enabled", True)
-        monkeypatch.setattr(parsing.config.parsing, "formula_recognition_device", "cpu")
+        monkeypatch.setattr(config.parsing, "formula_recognition_enabled", True)
+        monkeypatch.setattr(config.parsing, "formula_recognition_device", "cpu")
         existing = parsing.ParsedBlock(
             block_type="formula", text=r"$$x^2$$", latex=r"x^2", page=1
         )
@@ -600,7 +648,7 @@ class TestMineruStructure:
             [parsing.ParsedPage(page=1, text="已有部分公式")], blocks=[existing]
         )
 
-        enriched = parsing._enrich_document_with_formulas(doc, "paper.pdf")
+        enriched = formula._enrich_document_with_formulas(doc, "paper.pdf")
 
         assert enriched is not None
         latex = [block.latex for block in enriched.blocks if block.latex]

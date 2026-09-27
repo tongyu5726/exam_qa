@@ -1,0 +1,1 @@
+"""Internal document parsing adapters."""
