@@ -1,0 +1,26 @@
+{
+  "before": {
+    "case_count": 30,
+    "answerable_cases": 26,
+    "expected_source_present": 26,
+    "citation_count": 124,
+    "model_selected_count": 0,
+    "candidate_count": 124,
+    "flagged_cases": 0
+  },
+  "after": {
+    "case_count": 30,
+    "answerable_cases": 26,
+    "expected_source_present": 26,
+    "citation_count": 37,
+    "model_selected_count": 37,
+    "candidate_count": 0,
+    "flagged_cases": 0
+  },
+  "limitations": [
+    "引用数量减少不等于引用精准率提高",
+    "预期来源出现不等于全部结论获支持",
+    "模型选源仍需对照原文复核",
+    "不同运行的生成具有随机性"
+  ]
+}

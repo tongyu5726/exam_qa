@@ -30,9 +30,15 @@
 | 资料格式 | PDF · TXT · MD · DOC · DOCX · PPTX；PDF 支持质量评估、MinerU 高精度重试、可选外部增强与 OCR 回退 |
 | PDF 自动更新 | 哈希去重 + 文件名/内容匹配；新版影子入库成功后再切换 |
 | 证据治理 | 自动抽取版本/生效期/权威候选；人工固定场景后按场景、时效、权威筛选并解释引用 |
-| 意图路由 | 三层漏斗：规则直达 → 会话状态继承 → 受约束 LLM 兜底；不会将全部请求交给模型 |
+| Agent 产品交流 | 身份、当前配置模型、能力、问候与使用帮助不依赖课程资料；课程结论仍须据源回答 |
+| Agent 复习目标 | 对话目标 → 受约束规划 → 据源讲解/自测 → 作答反馈决策、错项补讲与受控重测；服务端检查点恢复，明确授权才保存 |
+| Agent 出题任务 | 对话补全需求 → 据源出题 → 独立校验 → 按授权保存草稿；展示进度与题目入口，支持同对话重试/停止 |
+| Agent 执行控制 | 原生 LangGraph SQLite 检查点；节点时间线、耗时、脱敏摘要、断点、暂停/继续/单步/取消，刷新及重启后显式恢复 |
+| 意图路由 | 课程范围先按规则与会话状态解析；Agent 再根据语义决定交流、澄清、课程取证或建立任务 |
 
 ## Quick Start
+
+对话页顶部的「执行过程」显示实际节点开始/结束和检查点历史。展开「节点断点」可选择在取证、生成、校验或保存工具执行前暂停；暂停后用「单步执行」只执行下一节点，或用「继续」沿原图恢复。暂停/取消请求在当前节点结束后生效，已经完成的保存结果保留。默认完整运行；普通课程问答决策失败仍通过受范围约束的 RAG 能力降级，业务任务失败保留检查点供显式重试。检查点保存在本地 SQLite，不向第三方发送追踪数据；图内提示词、原始资料和未提交答案不通过执行面板公开。
 
 ### PDF 图表视觉处理
 
@@ -52,7 +58,12 @@ uv sync --locked       # 仅首次安装或主动更新环境时执行
 uv run --no-sync exam  # → http://127.0.0.1:8787
 ```
 
-首次启动会在 `.env` 不存在时从模板创建，不会覆盖已有 `.env`。在设置页注册并选择 LLM；本地 Embedding 首次使用需联网下载模型，也可将 `EMBEDDING_MODEL` 设置为已下载的模型目录。无网络且无模型缓存时，需先提供本地模型或配置远程 Embedding API。
+在交互式终端启动时，会显示端口菜单：可用配置端口、自定义端口或选择附近的空闲端口。自定义端口可保存为以后启动的默认值；非交互环境直接使用 `PORT` 配置。网页的“设置 → 服务端口”也可检测、保存端口，保存后须重启服务，再从新端口打开页面。开发时 `pnpm dev` 的 API 代理读取项目根目录的 `PORT`。
+
+脚本中可用 `uv run --no-sync exam --port 9000` 临时指定端口；`--no-port-menu` 可跳过交互菜单，直接使用当前配置。
+Windows 的 `./start.ps1 -Port 9000` 和 `./start.ps1 -NoPortMenu` 提供相同入口。
+
+首次启动会在 `.env` 不存在时从模板创建，不会覆盖已有 `.env`。在设置页注册并选择 LLM；本地 Embedding 启动时自动离线加载已有缓存，不访问模型站点。首次无完整缓存时，在设置页点击「加载模型」下载缺失文件；也可将 `EMBEDDING_MODEL` 设置为已下载的完整模型目录。沿用 Hugging Face 缓存及 `SENTENCE_TRANSFORMERS_HOME` 配置，不搬移或清空已有模型。无网络且无模型缓存时，需先提供本地模型或配置远程 Embedding API。
 
 Windows 已有 `.venv` 时可直接执行 `./start.ps1`。它只调用现有 Python，不安装、卸载或同步任何依赖。也可在 PowerShell 中运行 `& .\.venv\Scripts\python.exe -m src.main`。
 
@@ -175,7 +186,6 @@ flowchart LR
 | `ingestion` / `parsing` | 解析分块入库；PDF 支持 MinerU 结构还原、语义切片、可选视觉摘要与 OCR 回退 |
 | `retrieval` / `rerank` | 向量 + BM25 → RRF；按场景/生效期过滤，再按权威/时效择证；可选 BGE CrossEncoder 精排 |
 | `query` / `intent` / `generation` | 三层意图路由与 `qa` / `concept` / `chapter` 编排、prompt |
-| `eval_metrics` | 离线 Recall@K / MRR |
 | `embedding` / `llm` | 本地或 OpenAI 兼容 API |
 | `storage/` | Chroma 向量 · SQLite 元数据与目录 |
 
@@ -192,15 +202,22 @@ exam-rag/
 │   ├── main.py              # FastAPI · 挂载 Vue 构建产物
 │   ├── ui_build.py          # 启动前按需构建 Vue
 │   ├── apis/v1/
-│   └── services/
+│   └── services/            # Agent、RAG、入库、解析、存储按职责分模块
 ├── frontend/                # Vue 3 源码、静态字体和 pnpm 锁文件
 │   ├── src/features/        # 对话、资料、题库、设置
 │   ├── src/api/             # /api/v1 客户端
 │   ├── src/stores/          # 课程、会话、主题状态
 │   └── public/fonts/        # 自托管字体与许可证
 ├── www-dist/                # Vite 构建产物（gitignore）
-├── docs/
-└── tests/
+├── tools/                   # 手动诊断与隔离预览，见 tools/README.md
+│   ├── diagnostics/
+│   └── preview/
+├── docs/                    # 现行规范与优化记录
+│   └── artifacts/quality/   # 历史质量报告与验收截图
+└── tests/                   # 共享 conftest、核心链路测试
+    ├── agent/              # Agent 决策、任务、组卷、复习目标
+    ├── eval/               # 离线评估入口（不混入默认测试）
+    └── fixtures/           # 固定资料样例
 ```
 
 </details>
@@ -263,8 +280,8 @@ VLM 使用 OpenAI 兼容协议，可在设置页填写模型、Base URL、API Ke
 | `GET` / `POST` | `/api/v1/llm-providers` | 列出 / 注册模型 |
 | `POST` | `/api/v1/llm-providers/active` | 切换当前模型 |
 | `DELETE` | `/api/v1/llm-providers/{name}` | 删除注册项 |
-| `POST` | `/api/v1/embedding/warmup` | 后台拉取/加载本地模型或探测远程 API |
-| `GET` | `/api/v1/embedding/status` | Embedding 就绪状态与拉取进度（`warmup.percent`） |
+| `POST` | `/api/v1/embedding/warmup` | 后台优先加载本地缓存，缺失时下载；或探测远程 API |
+| `GET` | `/api/v1/embedding/status` | Embedding 就绪状态与加载/下载进度（`warmup.percent`） |
 | `GET` | `/api/v1/colleges` | 学院 |
 | `GET` | `/api/v1/courses` | 课程（可选 `?college_id=`） |
 | `POST` | `/api/v1/documents` | 上传（Form 必填 `course_id`） |
@@ -274,7 +291,7 @@ VLM 使用 OpenAI 兼容协议，可在设置页填写模型、Base URL、API Ke
 | `PATCH` | `/api/v1/documents/{doc_id}/evidence` | 人工修订版本、生效期、权威及固定场景（`?course_id=`） |
 | `DELETE` | `/api/v1/documents/{doc_id}` | 删除（`?course_id=`） |
 | `POST` | `/api/v1/ask` | 问答（`course_id`；`mode=auto\|qa\|concept\|chapter`，默认 `auto`；可选 `scenario`、`as_of`） |
-| `POST` | `/api/v1/agent/run` | Agent 多步问答（`course_id`；可选 `scenario` / `as_of`；`agentic=true` 启用工具调用；`max_steps` 上限 10） |
+| `POST` | `/api/v1/agent/run` | Agent 多步问答（`course_id`；可选 `scenario` / `as_of`；默认 `agentic=true` 工具调用，`false` 为固定图兼容入口；`max_steps` 上限 10） |
 | `POST` | `/api/v1/question-bank/generate` | 基于当前课程有效资料生成并保存题目草稿 |
 | `GET/POST/PATCH/DELETE` | `/api/v1/question-bank/questions` | 我的题库题目管理（全程 `course_id` 隔离） |
 | `GET/POST/DELETE` | `/api/v1/question-bank/papers` | 试卷保存、读取与删除（全程 `course_id` 隔离） |
@@ -294,9 +311,13 @@ VLM 使用 OpenAI 兼容协议，可在设置页填写模型、Base URL、API Ke
 
 **意图识别**：`mode` 未指定时为 `auto`。规则层识别章节、概念、版本/时效和受控场景；指代性追问（如“按刚才那个范围”）从会话中继承上一轮已保存的结构化意图；仅在无可继承状态的模糊指代下调用 LLM，并强制其只返回经过枚举和日期校验的 JSON 计划。实际检索、范围过滤和证据选择始终由后端确定性执行。响应 `data.intent` 可用于观测路由层、置信度与最终检索范围。
 
-**Agent 多步问答（`/agent/run`）**：默认走 P2-B 固定图 `retrieve → grade → rewrite/generate → refuse`，检索不达标时自动改写查询重试（`max_steps` 默认 3、上限 10）。可传 `scenario`、`as_of` 复用证据范围/时效过滤。`langgraph` 已纳入项目依赖，`uv sync` 即会安装。
+**默认 Agent 对话**：普通交流由模型直接回答或选择 `respond_to_user`，两者均经独立语义核验；身份规则仅用于未配置或异常降级。`/ask` 与 `/agent/run` 共用范围解析及历史保存，后者也支持 `scope_override` 清除继承范围。
 
-**P2-C（受控工具调用）**：传 `agentic: true` 后，模型通过 OpenAI function calling 在 `agent → tool → agent` 中选择 `search_pdf` / `read_page` / `extract_table` / `analyze_chart` / `quote_source` 五个只读工具。系统强制课程范围、参数白名单与工具轮数；没有工具证据时一律拒答。响应 `data.tool_calls` 仅返回脱敏的工具名、参数、成功状态和引用数量。模型调用异常或未配置时自动回退 P2-B 固定图（`agentic: false`）。详见 `docs/04-后续演进规范.md` §4.4.8。
+网页 `/ask` 与 `/agent/run` 均默认执行 `agent → tool → agent` 决策循环。RAG 已注册为 `rag_answer` 工具，复用 `services/rag.py` 中的检索、视觉复核、生成和拒答能力；另外保留 `search_pdf` / `read_page` / `extract_table` / `analyze_chart` / `quote_source` 五个补充取证工具。系统强制课程、回答模式、场景、日期和会话历史，模型不能通过工具参数覆盖范围。
+
+响应 `data.steps`、`data.tool_calls` 和 `data.agentic` 可观测实际执行路径。公共对话入口工具调用轮数默认 6、`/agent/run` 上限 10；课程回答无有效工具证据或模型明确表示证据不足时固定拒答。模型工具决策异常或未配置时，运行时降级执行同一 RAG 工具，`agentic=false`；`/agent/run` 显式传 `agentic=false` 才使用旧固定检索图。
+
+SSE 保持 `phase → delta → done`：Agent 阶段实时报告状态，最终答案完成依据校验后发送正文；RAG 降级路径继续逐片生成。模型可以通过 `create_task` 将语义请求转为出题、组卷或复习目标，缺参先澄清，取证与保存由原任务工具执行。真实模型的工具调用质量与延迟需用所选提供商验证。
 
 **我的题库**：访问 `/sz-bank/`，选择课程后按知识点、章节、题型、难度和题数出题。系统先按 `course_id`、`scenario`、`as_of` 检索有效资料；无证据时返回 `grounded: false` 且不会保存。成功生成的题目默认是 `draft` 草稿，并保存答案、解析、题型、难度、章节、证据引用与资料版本；勾选题目即可保存试卷。还可按蓝图自动组卷：优先复用带有效证据的同课程题目，缺题才补生成草稿，并在题数、题型、难度、章节、总分、去重和课程隔离校验全部通过后保存。题库和试卷均严格课程隔离。
 
@@ -377,7 +398,7 @@ POST /api/v1/ask
 | PDF 内容指纹 · 影子入库 · 自动版本切换 | 已实现 |
 | 证据治理 · 三层意图路由 | 已实现 |
 | P2-B Agent（LangGraph 多步循环） | 已实现 |
-| P2-C LLM 自主决策 · 工具调用（function calling） | 已实现（显式开关，P2-B 默认/降级） |
+| P2-C LLM 自主决策 · 工具调用（function calling） | 已实现（默认 Agent，RAG 注册为工具） |
 | 我的题库 · 受控出题 · 组卷 | 已实现（题目草稿、证据引用、SQLite 保存、WebUI） |
 | P3 平台化 | 未做 |
 
@@ -411,4 +432,15 @@ WSL 用户建议把项目与虚拟环境放在 Linux 文件系统，减少跨文
 | [02 模块架构](docs/02-模块架构.md) | 流水线与数据模型 |
 | [03 工程规范](docs/03-工程规范.md) | 工具链与约定 |
 | [04 后续演进](docs/04-后续演进规范.md) | 多课程、检索增强、Agent |
-| [05 Web UI](docs/05-WebUI规划.md) | 工作台规格 |
+| [06 代码规模与优化计划](docs/06-代码规模与优化计划.md) | 规模统计、重复实现、精简顺序与验收 |
+| [08 练习与问答质量](docs/08-练习与问答质量.md) | 练习契约、质量基线及验证限制 |
+| [Vue 前端](frontend/README.md) | 当前界面、开发与构建约定 |
+
+
+## 对话出题任务
+
+可直接提问：“根据第三章资料生成 5 道中等难度选择题，保存为草稿”。缺少主题、题数或题型时先补全需求，Agent 再取证、生成、独立校验并按授权保存；未要求保存时只预览。支持同对话重试、停止及题目定位，单一题型出题或混合题型组卷均支持一批 1—10 道，默认最多 6 轮工具调用。组卷蓝图明确每种题型的数量与分值，总分不一致时先澄清。
+
+任务状态保存在按课程隔离的对话检查点；无有效证据或校验失败不保存，已保存批次重试不重复新增。完整 API、授权与恢复契约见 [后续演进规范](docs/04-后续演进规范.md) 的“对话出题任务”。
+
+组卷示例：“根据第三章资料组卷，1道选择题每题5分，1道简答题每题10分，总分15分，缺题允许补题，只预览”。确认预览后发送“保存试卷”。默认只复用题库，明确允许补题才生成；无有效依据、题目或资料变更、校验失败均不得保存半份结果。对话实时显示实际工具执行记录，保存后可打开试卷详情。

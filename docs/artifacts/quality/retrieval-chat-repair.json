@@ -1,0 +1,207 @@
+{
+  "date": "2026-10-10",
+  "model": "sentence-transformers/all-MiniLM-L6-v2",
+  "course_id": "course-default",
+  "active_chunks": 110,
+  "k": 5,
+  "score_threshold": 0.25,
+  "scope": "Local retrieval only; no remote LLM. Eight existing-material anchor checks, not full answer accuracy. Baseline uses original unnormalized queries, raw vector search, BM25, RRF top 5 then threshold.",
+  "cases": [
+    {
+      "question": "进程是什么",
+      "anchor": "进程是资源分配",
+      "before": {
+        "anchor_rank": 0,
+        "sources": [
+          "04-数据结构-哈希与树.docx",
+          "01b-操作系统-进程调度.txt",
+          "04-数据结构-哈希与树.docx",
+          "01b-操作系统-进程调度.txt",
+          "06-电路实验-参数对照表.docx"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt",
+          "01-操作系统-进程调度.md",
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt"
+        ]
+      }
+    },
+    {
+      "question": "帮我讲解进程是什么",
+      "anchor": "进程是资源分配",
+      "before": {
+        "anchor_rank": 0,
+        "sources": [
+          "04-数据结构-哈希与树.docx",
+          "01b-操作系统-进程调度.txt",
+          "04-数据结构-哈希与树.docx",
+          "01b-操作系统-进程调度.txt",
+          "06-电路实验-参数对照表.docx"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt",
+          "01-操作系统-进程调度.md",
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt"
+        ]
+      }
+    },
+    {
+      "question": "帮我介绍什么是进程",
+      "anchor": "进程是资源分配",
+      "before": {
+        "anchor_rank": 0,
+        "sources": [
+          "07-编译原理-多章节讲义.md",
+          "04-数据结构-哈希与树.docx",
+          "01b-操作系统-进程调度.txt",
+          "08-信号与系统-公式专项.md",
+          "01b-操作系统-进程调度.txt"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt",
+          "01-操作系统-进程调度.md",
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt"
+        ]
+      }
+    },
+    {
+      "question": "请你帮我解释一下什么是进程？",
+      "anchor": "进程是资源分配",
+      "before": {
+        "anchor_rank": 0,
+        "sources": [
+          "01-操作系统-进程调度.md",
+          "05-课程考核须知.pptx",
+          "04-数据结构-哈希与树.docx",
+          "01b-操作系统-进程调度.txt",
+          "01-操作系统-进程调度.md"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt",
+          "01-操作系统-进程调度.md",
+          "01-操作系统-进程调度.md",
+          "01b-操作系统-进程调度.txt"
+        ]
+      }
+    },
+    {
+      "question": "帮我介绍什么是电流",
+      "anchor": "电流(A)",
+      "before": {
+        "anchor_rank": 5,
+        "sources": [
+          "07-编译原理-多章节讲义.md",
+          "01-操作系统-进程调度.md",
+          "04-数据结构-哈希与树.docx",
+          "08-信号与系统-公式专项.md",
+          "06-电路实验-参数对照表.docx"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "06-电路实验-参数对照表.docx"
+        ]
+      }
+    },
+    {
+      "question": "帮我介绍什么是词法分析",
+      "anchor": "词法分析的输出",
+      "before": {
+        "anchor_rank": 1,
+        "sources": [
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md",
+          "07-编译原理-多章节讲义.md"
+        ]
+      }
+    },
+    {
+      "question": "傅里叶变换的定义是什么",
+      "anchor": "角频率形式的正变换定义为",
+      "before": {
+        "anchor_rank": 1,
+        "sources": [
+          "08-信号与系统-公式专项.md",
+          "01-操作系统-进程调度.md",
+          "07-编译原理-多章节讲义.md",
+          "08-信号与系统-公式专项.md",
+          "08-信号与系统-公式专项.md"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "08-信号与系统-公式专项.md",
+          "01-操作系统-进程调度.md",
+          "08-信号与系统-公式专项.md",
+          "07-编译原理-多章节讲义.md",
+          "08-信号与系统-公式专项.md"
+        ]
+      }
+    },
+    {
+      "question": "卷积定理",
+      "anchor": "卷积",
+      "before": {
+        "anchor_rank": 1,
+        "sources": [
+          "08-信号与系统-公式专项.md",
+          "08-信号与系统-公式专项.md",
+          "08-信号与系统-公式专项.md",
+          "04-数据结构-哈希与树.docx",
+          "08-信号与系统-公式专项.md"
+        ]
+      },
+      "after": {
+        "anchor_rank": 1,
+        "sources": [
+          "08-信号与系统-公式专项.md",
+          "08-信号与系统-公式专项.md",
+          "08-信号与系统-公式专项.md",
+          "04-数据结构-哈希与树.docx",
+          "08-信号与系统-公式专项.md"
+        ]
+      }
+    }
+  ],
+  "before": {
+    "recall_at_5": 0.5,
+    "mrr": 0.4
+  },
+  "after": {
+    "recall_at_5": 1.0,
+    "mrr": 1.0
+  }
+}

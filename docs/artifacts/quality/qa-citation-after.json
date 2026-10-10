@@ -1,0 +1,1966 @@
+{
+  "created_at": "2026-09-30T16:21:29.683391+00:00",
+  "corpus": "固定课程样例快照；含一份人为冲突草案",
+  "limitations": [
+    "未覆盖真实 PDF 视觉读图",
+    "机器标记不等于事实正确性判分",
+    "结果仅代表本次样例与配置"
+  ],
+  "settings": {
+    "embedding_provider": "local",
+    "score_threshold": 0.25,
+    "top_k": 5,
+    "rerank_enabled": false
+  },
+  "status": "captured",
+  "cases": [
+    {
+      "id": "S01",
+      "category": "公式",
+      "question": "写出角频率形式的连续时间傅里叶正变换。",
+      "source": "signals.md",
+      "anchor": "角频率形式的正变换定义为",
+      "required_facts": [
+        "积分范围为负无穷到正无穷",
+        "指数为负 jωt"
+      ],
+      "elapsed_seconds": 9.112,
+      "result": {
+        "answer": "角频率形式的连续时间傅里叶**正变换**定义为：\n\n$$X(j\\omega)=\\int_{-\\infty}^{\\infty}x(t)e^{-j\\omega t}\\,dt$$\n\n其中 $x(t)$ 为时间信号，$X(j\\omega)$ 为其频谱。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 连续时间傅里叶变换 时间傅里叶变换 角频率形式的正变换定义为： $$X(j\\omega)=\\int_{-\\infty}^{\\infty}x(t)e^{-j\\omega t}\\,dt$$ 逆变换： $$x(t)=\\frac{1}{2\\pi}\\int_{-\\infty}^{\\infty}X(j\\omega)e^{j\\omega t}\\,d\\omega$$  ## 卷积 $$(x*h)(t)=\\i",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "连续时间傅里叶变换",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S02",
+      "category": "公式",
+      "question": "连续时间傅里叶逆变换的前置系数是什么？",
+      "source": "signals.md",
+      "anchor": "逆变换",
+      "required_facts": [
+        "1/(2π)，不是 1/π"
+      ],
+      "elapsed_seconds": 3.298,
+      "result": {
+        "answer": "连续时间傅里叶逆变换的前置系数是 $\\dfrac{1}{2\\pi}$，逆变换定义为：\n\n$$x(t)=\\frac{1}{2\\pi}\\int_{-\\infty}^{\\infty}X(j\\omega)e^{j\\omega t}\\,d\\omega$$",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 连续时间傅里叶变换 时间傅里叶变换 角频率形式的正变换定义为： $$X(j\\omega)=\\int_{-\\infty}^{\\infty}x(t)e^{-j\\omega t}\\,dt$$ 逆变换： $$x(t)=\\frac{1}{2\\pi}\\int_{-\\infty}^{\\infty}X(j\\omega)e^{j\\omega t}\\,d\\omega$$  ## 卷积 $$(x*h)(t)=\\i",
+            "score": 0.9764,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "连续时间傅里叶变换",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "concept",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.82,
+          "layer": "rule",
+          "rationale": "命中知识点表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S03",
+      "category": "公式",
+      "question": "傅里叶逆变换的指数符号和积分变量是什么？",
+      "source": "signals.md",
+      "anchor": "e^{j\\omega t}",
+      "required_facts": [
+        "指数为正 jωt，积分变量为 ω"
+      ],
+      "elapsed_seconds": 4.55,
+      "result": {
+        "answer": "傅里叶逆变换为：\n\n$$x(t)=\\frac{1}{2\\pi}\\int_{-\\infty}^{\\infty}X(j\\omega)e^{j\\omega t}\\,d\\omega$$\n\n- **指数符号**：正号，即 $e^{j\\omega t}$（正变换 $X(j\\omega)=\\int_{-\\infty}^{\\infty}x(t)e^{-j\\omega t}\\,dt$ 中指数为负号，两者符号相反）。\n- **积分变量**：角频率 $\\omega$，积分区间为 $-\\infty$ 到 $\\infty$，前置系数为 $\\dfrac{1}{2\\pi}$。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 连续时间傅里叶变换 时间傅里叶变换 角频率形式的正变换定义为： $$X(j\\omega)=\\int_{-\\infty}^{\\infty}x(t)e^{-j\\omega t}\\,dt$$ 逆变换： $$x(t)=\\frac{1}{2\\pi}\\int_{-\\infty}^{\\infty}X(j\\omega)e^{j\\omega t}\\,d\\omega$$  ## 卷积 $$(x*h)(t)=\\i",
+            "score": 0.9544,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "连续时间傅里叶变换",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "concept",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.82,
+          "layer": "rule",
+          "rationale": "命中知识点表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S04",
+      "category": "公式",
+      "question": "给出连续时间卷积积分的表达式。",
+      "source": "signals.md",
+      "anchor": "h(t-\\tau)",
+      "required_facts": [
+        "x(τ)h(t-τ) 对 τ 积分",
+        "范围负无穷到正无穷"
+      ],
+      "elapsed_seconds": 1.911,
+      "result": {
+        "answer": "连续时间卷积积分的表达式为：\n\n$$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$\n\n其中 $x(t)$ 为输入信号，$h(t)$ 为冲激响应；LTI 系统的零状态响应等于输入与冲激响应的卷积。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 连续时间傅里叶变换 时间傅里叶变换 角频率形式的正变换定义为： $$X(j\\omega)=\\int_{-\\infty}^{\\infty}x(t)e^{-j\\omega t}\\,dt$$ 逆变换： $$x(t)=\\frac{1}{2\\pi}\\int_{-\\infty}^{\\infty}X(j\\omega)e^{j\\omega t}\\,d\\omega$$  ## 卷积 $$(x*h)(t)=\\i",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "连续时间傅里叶变换",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 卷积 ## 卷积 $$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$ LTI 系统的零状态响应等于输入与冲激响应的卷积。  ## 采样定理 若 x(t) 的频谱在 |ω| > ω_m 为零，则采样角频率须满足 ω_s > 2ω_m。 本样例称 2ω_m 为奈奎斯特率；等于该值时属于临界情况，实践中需留保护带。",
+            "score": 0.387,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "卷积",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S05",
+      "category": "条件",
+      "question": "LTI 系统的零状态响应与输入和冲激响应有什么关系？",
+      "source": "signals.md",
+      "anchor": "LTI 系统的零状态响应",
+      "required_facts": [
+        "等于二者卷积",
+        "限定 LTI 和零状态响应"
+      ],
+      "elapsed_seconds": 2.31,
+      "result": {
+        "answer": "LTI 系统的零状态响应等于输入信号与系统冲激响应的卷积：\n\n$$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$\n\n其中 $x(t)$ 为输入，$h(t)$ 为系统的冲激响应，积分结果即为零状态响应。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 卷积 ## 卷积 $$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$ LTI 系统的零状态响应等于输入与冲激响应的卷积。  ## 采样定理 若 x(t) 的频谱在 |ω| > ω_m 为零，则采样角频率须满足 ω_s > 2ω_m。 本样例称 2ω_m 为奈奎斯特率；等于该值时属于临界情况，实践中需留保护带。",
+            "score": 0.8978,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "卷积",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S06",
+      "category": "条件",
+      "question": "使用讲义采样定理需要满足什么频谱条件？",
+      "source": "signals.md",
+      "anchor": "频谱在 |ω| > ω_m 为零",
+      "required_facts": [
+        "带限，最高角频率 ω_m 外频谱为零"
+      ],
+      "elapsed_seconds": 5.411,
+      "result": {
+        "answer": "**采样定理所需的频谱条件（来自参考资料）**\n\n- 频谱条件：$x(t)$ 的频谱在 $|\\omega| > \\omega_m$ 处为零，即信号带限于 $\\omega_m$。\n- 在此条件下，采样角频率须满足 $\\omega_s > 2\\omega_m$。\n- 资料称 $2\\omega_m$ 为奈奎斯特率；采样率等于该值时属于临界情况，实践中需留保护带。\n\n补充说明：LTI 系统的零状态响应等于输入与冲激响应的卷积，\n\n$$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$\n\n此式与采样条件同属信号与系统公式专项内容，可一并复习。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 卷积 ## 卷积 $$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$ LTI 系统的零状态响应等于输入与冲激响应的卷积。  ## 采样定理 若 x(t) 的频谱在 |ω| > ω_m 为零，则采样角频率须满足 ω_s > 2ω_m。 本样例称 2ω_m 为奈奎斯特率；等于该值时属于临界情况，实践中需留保护带。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "卷积",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S07",
+      "category": "条件",
+      "question": "讲义要求采样角频率严格大于还是等于两倍最高角频率？",
+      "source": "signals.md",
+      "anchor": "ω_s > 2ω_m",
+      "required_facts": [
+        "严格大于",
+        "等于属于临界情况"
+      ],
+      "elapsed_seconds": 3.613,
+      "result": {
+        "answer": "讲义要求**严格大于**：若 $x(t)$ 的频谱在 $|\\omega| > \\omega_m$ 为零，则采样角频率须满足\n\n$$\\omega_s > 2\\omega_m$$\n\n其中 $2\\omega_m$ 被称为奈奎斯特率；$\\omega_s$ 等于该值时属于**临界情况**，实践中需留保护带。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 卷积 ## 卷积 $$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$ LTI 系统的零状态响应等于输入与冲激响应的卷积。  ## 采样定理 若 x(t) 的频谱在 |ω| > ω_m 为零，则采样角频率须满足 ω_s > 2ω_m。 本样例称 2ω_m 为奈奎斯特率；等于该值时属于临界情况，实践中需留保护带。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "卷积",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S08",
+      "category": "条件",
+      "question": "这里的奈奎斯特率指什么？",
+      "source": "signals.md",
+      "anchor": "2ω_m 为奈奎斯特率",
+      "required_facts": [
+        "2ω_m"
+      ],
+      "elapsed_seconds": 3.842,
+      "result": {
+        "answer": "根据资料，奈奎斯特率指 $2\\omega_m$：\n\n- 若 $x(t)$ 的频谱在 $|\\omega| > \\omega_m$ 为零（即信号最高角频率为 $\\omega_m$），则采样角频率须满足 $\\omega_s > 2\\omega_m$。\n- 资料明确「本样例称 $2\\omega_m$ 为奈奎斯特率」，即**信号最高角频率的两倍**。\n- 采样角频率**等于**该值时属于临界情况，实践中需留保护带。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 卷积 ## 卷积 $$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$ LTI 系统的零状态响应等于输入与冲激响应的卷积。  ## 采样定理 若 x(t) 的频谱在 |ω| > ω_m 为零，则采样角频率须满足 ω_s > 2ω_m。 本样例称 2ω_m 为奈奎斯特率；等于该值时属于临界情况，实践中需留保护带。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "卷积",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S09",
+      "category": "条件",
+      "question": "采样频率等于奈奎斯特率时，讲义如何提醒实践使用？",
+      "source": "signals.md",
+      "anchor": "实践中需留保护带",
+      "required_facts": [
+        "属于临界情况",
+        "实践需留保护带"
+      ],
+      "elapsed_seconds": 3.583,
+      "result": {
+        "answer": "当采样角频率 $\\omega_s$ 恰好等于奈奎斯特率 $2\\omega_m$ 时，属于**临界情况**；讲义提醒：**实践中需留保护带**（即实际采样角频率应满足 $\\omega_s > 2\\omega_m$，而不仅仅等于）。\n\n依据采样定理：若 $x(t)$ 的频谱在 $|\\omega| > \\omega_m$ 为零，则采样角频率须满足 $\\omega_s > 2\\omega_m$；本样例称 $2\\omega_m$ 为奈奎斯特率。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 卷积 ## 卷积 $$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$ LTI 系统的零状态响应等于输入与冲激响应的卷积。  ## 采样定理 若 x(t) 的频谱在 |ω| > ω_m 为零，则采样角频率须满足 ω_s > 2ω_m。 本样例称 2ω_m 为奈奎斯特率；等于该值时属于临界情况，实践中需留保护带。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "卷积",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "S10",
+      "category": "公式",
+      "question": "卷积表达式中冲激响应是 h(τ) 还是 h(t-τ)？",
+      "source": "signals.md",
+      "anchor": "h(t-\\tau)",
+      "required_facts": [
+        "h(t-τ)"
+      ],
+      "elapsed_seconds": 8.592,
+      "result": {
+        "answer": "卷积表达式中的冲激响应是 **$h(t-\\tau)$**，而不是 $h(\\tau)$。\n\n根据课程资料，卷积的定义为：\n\n$$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$\n\n- $h(t)$ 是系统的冲激响应；\n- 积分变量为 $\\tau$，对 $x$ 只作代换得到 $x(\\tau)$；\n- 对 $h$ 则需先将变量换成 $\\tau$、再作翻转与平移，即出现的是 $h(t-\\tau)$；\n- 积分结果是 $t$ 的函数，即 LTI 系统的零状态响应等于输入与冲激响应的卷积。",
+        "citations": [
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 卷积 ## 卷积 $$(x*h)(t)=\\int_{-\\infty}^{\\infty}x(\\tau)h(t-\\tau)\\,d\\tau$$ LTI 系统的零状态响应等于输入与冲激响应的卷积。  ## 采样定理 若 x(t) 的频谱在 |ω| > ω_m 为零，则采样角频率须满足 ω_s > 2ω_m。 本样例称 2ω_m 为奈奎斯特率；等于该值时属于临界情况，实践中需留保护带。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "卷积",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "1",
+            "source_file": "signals.md",
+            "page": null,
+            "snippet": "§§ 连续时间傅里叶变换 时间傅里叶变换 角频率形式的正变换定义为： $$X(j\\omega)=\\int_{-\\infty}^{\\infty}x(t)e^{-j\\omega t}\\,dt$$ 逆变换： $$x(t)=\\frac{1}{2\\pi}\\int_{-\\infty}^{\\infty}X(j\\omega)e^{j\\omega t}\\,d\\omega$$  ## 卷积 $$(x*h)(t)=\\i",
+            "score": 0.9627,
+            "evidence_role": "model_selected",
+            "source_version": "SigSys-F-1",
+            "effective_from": "0001-01-01",
+            "effective_to": "9999-12-31",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "all",
+            "selection_reason": "权威=课程资料(L40)；版本=SigSys-F-1",
+            "chapter": "连续时间傅里叶变换",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": null,
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L01",
+      "category": "表格",
+      "question": "电路实验参数表中 A1 的电压、电流、功率是多少？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "| A1 | 5.0 | 0.20 | 1.00",
+      "required_facts": [
+        "5.0 V、0.20 A、1.00 W"
+      ],
+      "elapsed_seconds": 3.066,
+      "result": {
+        "answer": "A1 行的参数为：\n\n| 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 |\n| --- | --- | --- | --- | --- |\n| A1 | 5.0 | 0.20 | 1.00 | 基准点 |\n\n即电压 $5.0\\,\\text{V}$、电流 $0.20\\,\\text{A}$、功率 $1.00\\,\\text{W}$（备注为“基准点”），且满足 $P=UI=5.0\\times0.20=1.00\\,\\text{W}$，未超过资料规定的 2.00W 断电阈值。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L02",
+      "category": "表格",
+      "question": "电路实验参数表 A2 的功率是多少？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "| A2 | 5.0 | 0.35 | 1.75",
+      "required_facts": [
+        "1.75 W"
+      ],
+      "elapsed_seconds": 2.875,
+      "result": {
+        "answer": "电路实验参数表中，**A2 的功率为 1.75 W**（对应电压 5.0 V、电流 0.35 A，备注为“负载边缘”）。\n\n另外，对照表规定：任一支路的实测功率超过 2.00 W 时必须断电并记录异常；B2 也标注“额定功率不得超过 2.00 W”。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 0.9331,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L03",
+      "category": "表格",
+      "question": "电路实验参数表 B1 的电流是多少？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "| B1 | 3.3 | 0.10 | 0.33",
+      "required_facts": [
+        "0.10 A"
+      ],
+      "elapsed_seconds": 2.104,
+      "result": {
+        "answer": "B1 行的电流为 **0.10 A**（对应电压 3.3 V、功率 0.33 W，备注为「低压组」）。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L04",
+      "category": "表格",
+      "question": "电路实验参数表 B2 的电压和功率分别是多少？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "| B2 | 12.0 | 0.05 | 0.60",
+      "required_facts": [
+        "12.0 V、0.60 W"
+      ],
+      "elapsed_seconds": 3.001,
+      "result": {
+        "answer": "根据参数对照表，编号 **B2** 的数据为：\n\n- **电压**：12.0 V\n- **功率**：0.60 W\n- 电流：0.05 A\n- 备注：额定功率不得超过 2.00 W",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 0.9005,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L05",
+      "category": "表格",
+      "question": "电路实验表中哪个支路功率最高，是多少？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "| A2 | 5.0 | 0.35 | 1.75",
+      "required_facts": [
+        "A2，1.75 W"
+      ],
+      "elapsed_seconds": 8.072,
+      "result": {
+        "answer": "**A2 支路功率最高，为 1.75 W。**\n\n各支路功率对照（证据3）：\n\n| 编号 | 电压(V) | 电流(A) | 功率(W) |\n| --- | --- | --- | --- |\n| A1 | 5.0 | 0.20 | 1.00 |\n| **A2** | **5.0** | **0.35** | **1.75** |\n| B1 | 3.3 | 0.10 | 0.33 |\n| B2 | 12.0 | 0.05 | 0.60 |\n\n- 最大值 1.75 W < 2.00 W，未超过「任一支路的实测功率超过 2.00 W 时必须断电并记录异常」的限值（证据1、3）。\n- A2 备注为「负载边缘」，B2 备注为「额定功率不得超过 2.00 W」。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 # 电路实验 · 参数对照表  本文件是 data/knowledge/06-电路实验-参数对照表.docx 的文字和表格快照。 版本：LabSheet-3；生效期 2024-02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 0.6264,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L06",
+      "category": "表格",
+      "question": "电路实验表中哪个支路功率最低，是多少？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "| B1 | 3.3 | 0.10 | 0.33",
+      "required_facts": [
+        "B1，0.33 W"
+      ],
+      "elapsed_seconds": 2.863,
+      "result": {
+        "answer": "电路实验参数对照表中，各支路实测功率分别为：A1 = 1.00 W、A2 = 1.75 W、B1 = 0.33 W、B2 = 0.60 W。\n\n因此功率最低的支路是 **B1**，功率为 **0.33 W**（电压 3.3 V、电流 0.10 A，备注为“低压组”）。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 0.6264,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L07",
+      "category": "条件",
+      "question": "电路实验实测功率超过 2.00W 时应做什么？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "必须断电并记录异常",
+      "required_facts": [
+        "断电",
+        "记录异常"
+      ],
+      "elapsed_seconds": 4.167,
+      "result": {
+        "answer": "根据《电路实验 · 参数对照表》（LabSheet-3）：\n\n**任一支路的实测功率超过 2.00 W 时，必须断电并记录异常。**\n\n参数表中相关条目也一致标注：编号 B2（12.0 V、0.05 A、0.60 W）的备注为「额定功率不得超过 2.00 W」，即 2.00 W 是该实验的功率上限阈值。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 # 电路实验 · 参数对照表  本文件是 data/knowledge/06-电路实验-参数对照表.docx 的文字和表格快照。 版本：LabSheet-3；生效期 2024-02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 0.8003,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L08",
+      "category": "表格",
+      "question": "电路实验参数表里额定功率不得超过 2.00W 的备注在哪一行？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "| B2 | 12.0",
+      "required_facts": [
+        "B2"
+      ],
+      "elapsed_seconds": 3.659,
+      "result": {
+        "answer": "备注「额定功率不得超过 2.00W」在参数对照表的 **B2** 行：\n\n| 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 |\n| --- | --- | --- | --- | --- |\n| B2 | 12.0 | 0.05 | 0.60 | 额定功率不得超过 2.00W |\n\n补充：表前的通用规则也指出「任一支路的实测功率超过 2.00W 时必须断电并记录异常」。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 # 电路实验 · 参数对照表  本文件是 data/knowledge/06-电路实验-参数对照表.docx 的文字和表格快照。 版本：LabSheet-3；生效期 2024-02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。",
+            "score": 0.6829,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "L09",
+      "category": "时效",
+      "question": "在 2025-01-01 电路参数表是哪一版本，生效期是什么？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "source": "lab.md",
+      "anchor": "生效期 2024-02-01 至 2026-02-01",
+      "required_facts": [
+        "LabSheet-3",
+        "2024-02-01 至 2026-02-01"
+      ],
+      "elapsed_seconds": 6.308,
+      "result": {
+        "answer": "2025-01-01 时，电路参数表为 **LabSheet-3** 版本，生效期为 **2024-02-01 至 2026-02-01**，该日期处于生效期内，因此适用此版本。\n\n相关提示（同一份资料）：任一支路的实测功率超过 2.00W 时必须断电并记录异常。",
+        "citations": [
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 # 电路实验 · 参数对照表  本文件是 data/knowledge/06-电路实验-参数对照表.docx 的文字和表格快照。 版本：LabSheet-3；生效期 2024-02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "2",
+            "source_file": "lab.md",
+            "page": null,
+            "snippet": "§ 电路实验 · 参数对照表 -02-01 至 2026-02-01。 任一支路的实测功率超过 2.00W 时必须断电并记录异常。  | 编号 | 电压(V) | 电流(A) | 功率(W) | 备注 | | --- | --- | --- | --- | --- | | A1 | 5.0 | 0.20 | 1.00 | 基准点 | | A2 | 5.0 | 0.35 | 1.75 | 负载边缘 ",
+            "score": 0.422,
+            "evidence_role": "model_selected",
+            "source_version": "LabSheet-3",
+            "effective_from": "2024-02-01",
+            "effective_to": "2026-02-01",
+            "authority_level": 40,
+            "authority_label": "课程资料",
+            "applicability_scope": "实验",
+            "selection_reason": "适用场景=实验；生效期=2024-02-01~2026-02-01；权威=课程资料(L40)；版本=LabSheet-3",
+            "chapter": "电路实验 · 参数对照表",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "P01",
+      "category": "时效",
+      "question": "2025-01-01 正式课程考核文件的版本是什么？",
+      "scenario": "final_exam",
+      "as_of": "2025-01-01",
+      "source": "policy.md",
+      "anchor": "Policy-2024A",
+      "required_facts": [
+        "Policy-2024A"
+      ],
+      "elapsed_seconds": 5.224,
+      "result": {
+        "answer": "**2025-01-01 正式课程考核文件的版本为 Policy-2024A。**\n\n依据：\n\n- 正式《课程考核须知》标注「版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31」，且「截至 2025-08-31 本须知仍有效，可作为期末成绩依据」，因此 2025-01-01 处于其有效期内。\n- 另有一份标注版本 0.1 的《课程考核讨论稿》，但其为「草案或试行稿(L10)」，且文件自述「冲突时正式文件优先，本草案不能替代正式课程考核须知」，故不作为答案。\n\n补充：正式文件的成绩构成为 平时 30% + 实验 20% + 期末 50%（草案中的 40%/20%/40% 不适用）。",
+        "citations": [
+          {
+            "doc_id": "3",
+            "source_file": "policy.md",
+            "page": null,
+            "snippet": "§ 课程考核须知 · 正式文件 # 课程考核须知 · 正式文件  本文件是 data/knowledge/05-课程考核须知.pptx 的文字快照。 版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31。 截至 2025-08-31 本须知仍有效，可作为期末成绩依据。 本须知仅适用于期末闭卷考试，不适用于实验和平时分。 成绩构成：平时 30% + 实验 2",
+            "score": 0.9554,
+            "evidence_role": "model_selected",
+            "source_version": "Policy-2024A",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 50,
+            "authority_label": "机构文件",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=机构文件(L50)；版本=Policy-2024A",
+            "chapter": "课程考核须知 · 正式文件",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "4",
+            "source_file": "policy-draft.md",
+            "page": null,
+            "snippet": "§ 课程考核讨论稿 · 冲突测试补充资料 # 课程考核讨论稿 · 冲突测试补充资料  这是专为冲突评估编写的低权威草案，不是现有课程的真实规定。 版本：0.1；生效日期 2024-09-01；失效日期 2025-08-31。 适用期末闭卷考试。草案建议平时 40% + 实验 20% + 期末 40%。 冲突时正式文件优先，本草案不能替代正式课程考核须知。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "0.1",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 10,
+            "authority_label": "草案或试行稿",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=草案或试行稿(L10)；版本=0.1",
+            "chapter": "课程考核讨论稿 · 冲突测试补充资料",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "P02",
+      "category": "范围",
+      "question": "正式课程考核须知适用于什么考试？",
+      "scenario": "final_exam",
+      "as_of": "2025-01-01",
+      "source": "policy.md",
+      "anchor": "仅适用于期末闭卷考试",
+      "required_facts": [
+        "期末闭卷考试",
+        "不适用于实验和平时分"
+      ],
+      "elapsed_seconds": 7.028,
+      "result": {
+        "answer": "正式课程考核须知**仅适用于期末闭卷考试，不适用于实验和平时分**。\n\n同时须知还规定成绩构成为：平时 30% + 实验 20% + 期末 50%；缺考按 0 分处理。",
+        "citations": [
+          {
+            "doc_id": "3",
+            "source_file": "policy.md",
+            "page": null,
+            "snippet": "§ 课程考核须知 · 正式文件 # 课程考核须知 · 正式文件  本文件是 data/knowledge/05-课程考核须知.pptx 的文字快照。 版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31。 截至 2025-08-31 本须知仍有效，可作为期末成绩依据。 本须知仅适用于期末闭卷考试，不适用于实验和平时分。 成绩构成：平时 30% + 实验 2",
+            "score": 0.9761,
+            "evidence_role": "model_selected",
+            "source_version": "Policy-2024A",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 50,
+            "authority_label": "机构文件",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=机构文件(L50)；版本=Policy-2024A",
+            "chapter": "课程考核须知 · 正式文件",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "4",
+            "source_file": "policy-draft.md",
+            "page": null,
+            "snippet": "§ 课程考核讨论稿 · 冲突测试补充资料 # 课程考核讨论稿 · 冲突测试补充资料",
+            "score": 0.516,
+            "evidence_role": "model_selected",
+            "source_version": "0.1",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 10,
+            "authority_label": "草案或试行稿",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=草案或试行稿(L10)；版本=0.1",
+            "chapter": "课程考核讨论稿 · 冲突测试补充资料",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "P03",
+      "category": "规则",
+      "question": "正式课程考核须知中缺考如何处理？",
+      "scenario": "final_exam",
+      "as_of": "2025-01-01",
+      "source": "policy.md",
+      "anchor": "缺考按 0 分处理",
+      "required_facts": [
+        "按 0 分"
+      ],
+      "elapsed_seconds": 6.289,
+      "result": {
+        "answer": "**缺考处理**：按正式《课程考核须知》（Policy-2024A，生效期 2024-09-01 至 2025-08-31）规定，**缺考按 0 分处理**；补考安排以学院通知为准，且补考不一定覆盖整门课程成绩，按学校规定另行计算。\n\n补充说明：\n- 该须知仅适用于期末闭卷考试，不适用于实验和平时分；成绩构成为平时 30% + 实验 20% + 期末 50%。\n- 另有一份版本 0.1 的《课程考核讨论稿》提出平时 40% + 实验 20% + 期末 40%，但其为低权威草案，文件明确“冲突时正式文件优先，本草案不能替代正式课程考核须知”，故以正式文件为准。",
+        "citations": [
+          {
+            "doc_id": "3",
+            "source_file": "policy.md",
+            "page": null,
+            "snippet": "§ 课程考核须知 · 正式文件 # 课程考核须知 · 正式文件  本文件是 data/knowledge/05-课程考核须知.pptx 的文字快照。 版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31。 截至 2025-08-31 本须知仍有效，可作为期末成绩依据。 本须知仅适用于期末闭卷考试，不适用于实验和平时分。 成绩构成：平时 30% + 实验 2",
+            "score": 0.8672,
+            "evidence_role": "model_selected",
+            "source_version": "Policy-2024A",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 50,
+            "authority_label": "机构文件",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=机构文件(L50)；版本=Policy-2024A",
+            "chapter": "课程考核须知 · 正式文件",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "4",
+            "source_file": "policy-draft.md",
+            "page": null,
+            "snippet": "§ 课程考核讨论稿 · 冲突测试补充资料 # 课程考核讨论稿 · 冲突测试补充资料  这是专为冲突评估编写的低权威草案，不是现有课程的真实规定。 版本：0.1；生效日期 2024-09-01；失效日期 2025-08-31。 适用期末闭卷考试。草案建议平时 40% + 实验 20% + 期末 40%。 冲突时正式文件优先，本草案不能替代正式课程考核须知。",
+            "score": 0.5302,
+            "evidence_role": "model_selected",
+            "source_version": "0.1",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 10,
+            "authority_label": "草案或试行稿",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=草案或试行稿(L10)；版本=0.1",
+            "chapter": "课程考核讨论稿 · 冲突测试补充资料",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2025-01-01",
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "P04",
+      "category": "规则",
+      "question": "正式课程考核须知说补考安排以什么为准？",
+      "scenario": "final_exam",
+      "as_of": "2025-01-01",
+      "source": "policy.md",
+      "anchor": "补考安排以学院通知为准",
+      "required_facts": [
+        "学院通知"
+      ],
+      "elapsed_seconds": 3.7,
+      "result": {
+        "answer": "正式《课程考核须知》（Policy-2024A，正式文件）规定：**补考安排以学院通知为准**；同时说明补考不一定覆盖整门课程成绩，按学校规定另行计算，缺考按 0 分处理。\n\n（另注：成绩构成为平时 30% + 实验 20% + 期末 50%，该须知仅适用于期末闭卷考试。）",
+        "citations": [
+          {
+            "doc_id": "3",
+            "source_file": "policy.md",
+            "page": null,
+            "snippet": "§ 课程考核须知 · 正式文件 # 课程考核须知 · 正式文件  本文件是 data/knowledge/05-课程考核须知.pptx 的文字快照。 版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31。 截至 2025-08-31 本须知仍有效，可作为期末成绩依据。 本须知仅适用于期末闭卷考试，不适用于实验和平时分。 成绩构成：平时 30% + 实验 2",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "Policy-2024A",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 50,
+            "authority_label": "机构文件",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=机构文件(L50)；版本=Policy-2024A",
+            "chapter": "课程考核须知 · 正式文件",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2025-01-01",
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "P05",
+      "category": "条件",
+      "question": "补考一定覆盖整门课程成绩吗？",
+      "scenario": "final_exam",
+      "as_of": "2025-01-01",
+      "source": "policy.md",
+      "anchor": "补考不一定覆盖整门课程成绩",
+      "required_facts": [
+        "不一定",
+        "按学校规定另行计算"
+      ],
+      "elapsed_seconds": 6.14,
+      "result": {
+        "answer": "**补考不一定覆盖整门课程成绩。**\n\n依据《课程考核须知 · 正式文件》（Policy-2024A，有效期至 2025-08-31）：\n\n- 「补考不一定覆盖整门课程成绩，按学校规定另行计算。」\n- 「补考安排以学院通知为准。」\n- 「缺考按 0 分处理。」\n\n另需注意，该须知的成绩构成为：平时 30% + 实验 20% + 期末 50%；须知仅适用于期末闭卷考试，不适用于实验和平时分。\n\n（补充：参考资料中另有一份《课程考核讨论稿》（版本 0.1，草案/L10 权威），其规定的权重与正式文件不同，但该稿明确「冲突时正式文件优先，本草案不能替代正式课程考核须知」，故以正式文件为准。）",
+        "citations": [
+          {
+            "doc_id": "3",
+            "source_file": "policy.md",
+            "page": null,
+            "snippet": "§ 课程考核须知 · 正式文件 # 课程考核须知 · 正式文件  本文件是 data/knowledge/05-课程考核须知.pptx 的文字快照。 版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31。 截至 2025-08-31 本须知仍有效，可作为期末成绩依据。 本须知仅适用于期末闭卷考试，不适用于实验和平时分。 成绩构成：平时 30% + 实验 2",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "Policy-2024A",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 50,
+            "authority_label": "机构文件",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=机构文件(L50)；版本=Policy-2024A",
+            "chapter": "课程考核须知 · 正式文件",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "qa",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2025-01-01",
+          "confidence": 0.4,
+          "layer": "default",
+          "rationale": "普通问答，使用默认检索"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "C01",
+      "category": "冲突",
+      "question": "以正式课程考核须知为依据，平时、实验、期末成绩占比分别多少？",
+      "scenario": "final_exam",
+      "as_of": "2025-01-01",
+      "source": "policy.md",
+      "anchor": "平时 30% + 实验 20% + 期末 50%",
+      "required_facts": [
+        "30%、20%、50%",
+        "采用正式文件而非草案"
+      ],
+      "elapsed_seconds": 4.217,
+      "result": {
+        "answer": "以正式《课程考核须知》（版本 Policy-2024A）为依据，成绩构成为：\n\n- 平时成绩：30%\n- 实验成绩：20%\n- 期末成绩：50%\n\n即 平时 30% + 实验 20% + 期末 50%。\n\n说明：另有低权威讨论稿（草案 0.1）建议“平时 40% + 实验 20% + 期末 40%”，但该草案明确声明“冲突时正式文件优先，本草案不能替代正式课程考核须知”，故应以正式文件的 30%/20%/50% 为准。",
+        "citations": [
+          {
+            "doc_id": "3",
+            "source_file": "policy.md",
+            "page": null,
+            "snippet": "§ 课程考核须知 · 正式文件 # 课程考核须知 · 正式文件  本文件是 data/knowledge/05-课程考核须知.pptx 的文字快照。 版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31。 截至 2025-08-31 本须知仍有效，可作为期末成绩依据。 本须知仅适用于期末闭卷考试，不适用于实验和平时分。 成绩构成：平时 30% + 实验 2",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "Policy-2024A",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 50,
+            "authority_label": "机构文件",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=机构文件(L50)；版本=Policy-2024A",
+            "chapter": "课程考核须知 · 正式文件",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "4",
+            "source_file": "policy-draft.md",
+            "page": null,
+            "snippet": "§ 课程考核讨论稿 · 冲突测试补充资料 # 课程考核讨论稿 · 冲突测试补充资料  这是专为冲突评估编写的低权威草案，不是现有课程的真实规定。 版本：0.1；生效日期 2024-09-01；失效日期 2025-08-31。 适用期末闭卷考试。草案建议平时 40% + 实验 20% + 期末 40%。 冲突时正式文件优先，本草案不能替代正式课程考核须知。",
+            "score": 0.702,
+            "evidence_role": "model_selected",
+            "source_version": "0.1",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 10,
+            "authority_label": "草案或试行稿",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=草案或试行稿(L10)；版本=0.1",
+            "chapter": "课程考核讨论稿 · 冲突测试补充资料",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "C02",
+      "category": "冲突",
+      "question": "讨论稿提出期末 40%，正式课程考核文件规定期末多少，应该以哪个为准？",
+      "scenario": "final_exam",
+      "as_of": "2025-01-01",
+      "source": "policy.md",
+      "anchor": "期末 50%",
+      "required_facts": [
+        "正式文件期末 50%",
+        "说明权威选择依据"
+      ],
+      "elapsed_seconds": 4.597,
+      "result": {
+        "answer": "**正式文件规定：期末占 50%。**\n\n成绩构成为：平时 30% + 实验 20% + 期末 50%（该须知仅适用于期末闭卷考试，不适用于实验和平时分）。\n\n**以正式文件为准。** 讨论稿提出的“平时 40% + 实验 20% + 期末 40%”属于低权威草案（权威=草案或试行稿 L10，版本 0.1），其本身即声明：冲突时正式文件优先，本草案不能替代正式课程考核须知。正式《课程考核须知》为机构文件（L50，版本 Policy-2024A），因此期末权重按 50% 执行。",
+        "citations": [
+          {
+            "doc_id": "3",
+            "source_file": "policy.md",
+            "page": null,
+            "snippet": "§ 课程考核须知 · 正式文件 # 课程考核须知 · 正式文件  本文件是 data/knowledge/05-课程考核须知.pptx 的文字快照。 版本：Policy-2024A；生效日期 2024-09-01；失效日期 2025-08-31。 截至 2025-08-31 本须知仍有效，可作为期末成绩依据。 本须知仅适用于期末闭卷考试，不适用于实验和平时分。 成绩构成：平时 30% + 实验 2",
+            "score": 0.6173,
+            "evidence_role": "model_selected",
+            "source_version": "Policy-2024A",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 50,
+            "authority_label": "机构文件",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=机构文件(L50)；版本=Policy-2024A",
+            "chapter": "课程考核须知 · 正式文件",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          },
+          {
+            "doc_id": "4",
+            "source_file": "policy-draft.md",
+            "page": null,
+            "snippet": "§ 课程考核讨论稿 · 冲突测试补充资料 # 课程考核讨论稿 · 冲突测试补充资料  这是专为冲突评估编写的低权威草案，不是现有课程的真实规定。 版本：0.1；生效日期 2024-09-01；失效日期 2025-08-31。 适用期末闭卷考试。草案建议平时 40% + 实验 20% + 期末 40%。 冲突时正式文件优先，本草案不能替代正式课程考核须知。",
+            "score": 1.0,
+            "evidence_role": "model_selected",
+            "source_version": "0.1",
+            "effective_from": "2024-09-01",
+            "effective_to": "2025-08-31",
+            "authority_level": 10,
+            "authority_label": "草案或试行稿",
+            "applicability_scope": "final_exam",
+            "selection_reason": "适用场景=final_exam；生效期=2024-09-01~2025-08-31；权威=草案或试行稿(L10)；版本=0.1",
+            "chapter": "课程考核讨论稿 · 冲突测试补充资料",
+            "section_path": "",
+            "block_type": "text",
+            "bbox": "",
+            "pdf_page_label": "",
+            "textbook_references": "",
+            "content_role": "content",
+            "parser_name": "md",
+            "parse_quality": 0.0
+          }
+        ],
+        "grounded": true,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "N01",
+      "category": "拒答",
+      "question": "2026-09-30 当前有效的课程考核成绩比例是多少？",
+      "scenario": "final_exam",
+      "as_of": "2026-09-30",
+      "expect_refusal": true,
+      "required_facts": [
+        "固定拒答，不使用过期的比例"
+      ],
+      "elapsed_seconds": 5.739,
+      "result": {
+        "answer": "资料库中未找到相关内容",
+        "citations": [],
+        "grounded": false,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "final_exam",
+          "as_of": "2026-09-30",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "N02",
+      "category": "隔离",
+      "question": "电路实验参数表中 A2 的功率是多少？",
+      "empty_course": true,
+      "expect_refusal": true,
+      "required_facts": [
+        "空课程不能命中他课资料，固定拒答"
+      ],
+      "elapsed_seconds": 0.016,
+      "result": {
+        "answer": "资料库中未找到相关内容",
+        "citations": [],
+        "grounded": false,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": null,
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "N03",
+      "category": "拒答",
+      "question": "火星最新一任总督叫什么名字？",
+      "expect_refusal": true,
+      "required_facts": [
+        "资料无依据，固定拒答"
+      ],
+      "elapsed_seconds": 2.587,
+      "result": {
+        "answer": "资料库中未找到相关内容",
+        "citations": [],
+        "grounded": false,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": null,
+          "as_of": "2026-10-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    },
+    {
+      "id": "N04",
+      "category": "范围",
+      "question": "以实验场景下有效文件为依据，正式课程考核成绩比例是多少？",
+      "scenario": "实验",
+      "as_of": "2025-01-01",
+      "expect_refusal": true,
+      "required_facts": [
+        "不能使用 final_exam 场景的考核比例"
+      ],
+      "elapsed_seconds": 3.121,
+      "result": {
+        "answer": "资料库中未找到相关内容",
+        "citations": [],
+        "grounded": false,
+        "intent": {
+          "task": "rule_query",
+          "mode": "qa",
+          "scenario": "实验",
+          "as_of": "2025-01-01",
+          "confidence": 0.91,
+          "layer": "rule",
+          "rationale": "命中规则、场景或时效表达"
+        }
+      },
+      "flags": [],
+      "review": {
+        "status": "pending",
+        "fact_correct": null,
+        "conditions_complete": null,
+        "citations_support_answer": null,
+        "notes": ""
+      }
+    }
+  ]
+}

@@ -1,0 +1,197 @@
+{
+  "date": "2026-10-04",
+  "baseline": "working tree snapshot at start of optimization",
+  "source_before": {
+    "files": 83,
+    "lines": 12878,
+    "nonblank": 11201
+  },
+  "source_after": {
+    "files": 85,
+    "lines": 12633,
+    "nonblank": 10956
+  },
+  "tests_before": {
+    "files": 35,
+    "lines": 5334,
+    "nonblank": 4537
+  },
+  "tests_after": {
+    "files": 36,
+    "lines": 5618,
+    "nonblank": 4780
+  },
+  "changes": [
+    {
+      "file": "src/apis/v1/config.py",
+      "before_lines": 410,
+      "after_lines": 278
+    },
+    {
+      "file": "src/services/agent/graph.py",
+      "before_lines": 173,
+      "after_lines": 169
+    },
+    {
+      "file": "src/services/agent/nodes.py",
+      "before_lines": 252,
+      "after_lines": 248
+    },
+    {
+      "file": "src/services/agent/tools.py",
+      "before_lines": 442,
+      "after_lines": 407
+    },
+    {
+      "file": "src/services/citations.py",
+      "before_lines": 0,
+      "after_lines": 35
+    },
+    {
+      "file": "src/services/generation.py",
+      "before_lines": 234,
+      "after_lines": 206
+    },
+    {
+      "file": "src/services/ingestion.py",
+      "before_lines": 391,
+      "after_lines": 355
+    },
+    {
+      "file": "src/services/llm_providers.py",
+      "before_lines": 235,
+      "after_lines": 268
+    },
+    {
+      "file": "src/services/parsing_adapters/pdf/strategy.py",
+      "before_lines": 123,
+      "after_lines": 126
+    },
+    {
+      "file": "src/services/query.py",
+      "before_lines": 392,
+      "after_lines": 282
+    },
+    {
+      "file": "src/services/question_bank.py",
+      "before_lines": 258,
+      "after_lines": 245
+    },
+    {
+      "file": "src/services/retrieval.py",
+      "before_lines": 665,
+      "after_lines": 666
+    },
+    {
+      "file": "src/services/storage/vector_store.py",
+      "before_lines": 649,
+      "after_lines": 618
+    },
+    {
+      "file": "src/services/visual_evidence.py",
+      "before_lines": 0,
+      "after_lines": 76
+    },
+    {
+      "file": "tests/test_agent_tools.py",
+      "before_lines": 161,
+      "after_lines": 179
+    },
+    {
+      "file": "tests/test_ask.py",
+      "before_lines": 596,
+      "after_lines": 638
+    },
+    {
+      "file": "tests/test_citation_selection.py",
+      "before_lines": 54,
+      "after_lines": 90
+    },
+    {
+      "file": "tests/test_config_updates.py",
+      "before_lines": 0,
+      "after_lines": 77
+    },
+    {
+      "file": "tests/test_evidence_metadata.py",
+      "before_lines": 75,
+      "after_lines": 99
+    },
+    {
+      "file": "tests/test_ingest.py",
+      "before_lines": 360,
+      "after_lines": 392
+    },
+    {
+      "file": "tests/test_parsing.py",
+      "before_lines": 656,
+      "after_lines": 688
+    },
+    {
+      "file": "tests/test_retrieval.py",
+      "before_lines": 409,
+      "after_lines": 432
+    }
+  ],
+  "config_fields_mapping_identical": 55,
+  "list_fixture_comparisons": [
+    {
+      "fixture": "numbered",
+      "identical_hits_scores_metadata": true,
+      "result_ids": [
+        "doc_2",
+        "doc_3"
+      ],
+      "document_reads": 1,
+      "rows_read": 4
+    },
+    {
+      "fixture": "chinese",
+      "identical_hits_scores_metadata": true,
+      "result_ids": [
+        "doc_1",
+        "doc_2"
+      ],
+      "document_reads": 1,
+      "rows_read": 3
+    },
+    {
+      "fixture": "overlap",
+      "identical_hits_scores_metadata": true,
+      "result_ids": [
+        "doc_1",
+        "doc_2"
+      ],
+      "document_reads": 1,
+      "rows_read": 4
+    },
+    {
+      "fixture": "no_list",
+      "identical_hits_scores_metadata": true,
+      "result_ids": [],
+      "document_reads": 1,
+      "rows_read": 1
+    }
+  ],
+  "list_microbenchmark": {
+    "before_median_ms": 1.885,
+    "after_median_ms": 0.594,
+    "runs": 30,
+    "rows_read_per_call": 2000,
+    "reads_per_call": 1,
+    "anchors": 8,
+    "scope": "synthetic CPU-only expansion; no disk/model/network"
+  },
+  "backend_tests": {
+    "before_passed": 259,
+    "after_passed": 282,
+    "skipped": 1,
+    "integration_deselected": 22
+  },
+  "frontend": {
+    "tests": 13,
+    "lint": "passed",
+    "build": "passed",
+    "source_changed_this_turn": false
+  }
+}

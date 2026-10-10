@@ -43,8 +43,8 @@ uv run --no-sync pytest -q -m integration   # 集成测试（需显式传入 Emb
 - PDF 支持自动版本更新：为同课程的新文件计算内容哈希、标识疑似版本，新版解析/入库成功后才替换旧版；旧版保留历史元数据。
 - 证据元数据：入库自动提取版本、生效期和权威候选；固定适用范围必须使用人工维护的 `applicability_scope` 场景键。查询传 `scenario` / `as_of` 时先过滤范围与时效，再按权威层级、生效时间择证，并在 citation 解释选择依据。
 - 意图路由采用三层漏斗：规则层优先；指代追问继承 `ConversationStore` 的已确认意图；仅无状态的复杂模糊请求允许受约束 LLM 返回 JSON 计划。LLM 不得绕过检索、课程隔离、场景和时效校验；课程隔离不是用户鉴权。
-- Agent（LangGraph 多步循环）已落地为 P2-B：`src/services/agent/` + `POST /agent/run`，仅薄封装 `retrieve` / `generate`，不重写 P0 主链路（ingestion → retrieval → generation）。
-- P2-C 已接入 `/agent/run`：`agentic=true` 启用 `agent ↔ tool` 的 function-calling 循环，默认仍为 P2-B，LLM 异常或未配置会自动降级。只读工具以白名单分发、系统强制 `course_id` / 场景 / 时效范围，并返回脱敏的 `tool_calls` 观测；仍不引入 MCP / Skills。
+- Agent 是默认对话入口：`/ask` 与 `/agent/run` 默认执行 `agent ↔ tool` 决策循环。RAG 位于 `src/services/rag.py`，通过 `rag_answer` 注册为工具，复用检索/生成/视觉复核，不重写入库主链路。
+- `agentic` 默认 `true`；工具决策异常或未配置时降级执行同一 RAG 工具。`/agent/run` 显式 `agentic=false` 才走旧固定图。工具白名单、系统强制课程/模式/场景/日期/历史、循环上限、拒答和引用约束必须保留；响应返回脱敏 `tool_calls` 与实际路径。仍不引入 MCP / Skills。
 - “我的题库”位于 `QuestionBankStore`、`services/question_bank.py`、`/api/v1/question-bank/*` 与 `/sz-bank/`：自动出题必须先检索当前课程的有效证据，无证据不保存；题目和试卷均以 `course_id` 隔离。自动组卷只复用带有效证据的题目，缺题时才受控补题，并校验蓝图、去重、总分与课程范围。
 
 ## 测试约定
@@ -52,3 +52,27 @@ uv run --no-sync pytest -q -m integration   # 集成测试（需显式传入 Emb
 - pytest 覆盖核心链路：对话（`test_ask`）、入库（`test_ingest`）、检索隔离（`test_retrieval`）、解析（`test_parsing`）、API（`test_api`）。
 - 覆盖核心链路，不镜像每个工具函数；离线 Recall@K / MRR 用 `tests/eval/run_retrieval_eval.py`，不进默认 pytest。
 - 集成测试标 `@integration`。
+
+## 项目更新技能
+
+开发技能统一放在 `.agents/skills/`，不进入产品运行时。
+
+- [证据链更新](.agents/skills/exam-rag-update/SKILL.md)：入库、检索、问答与 Agent。
+- [配置更新](.agents/skills/exam-config-update/SKILL.md)：配置字段、保存与设置页。
+- [回归与测试精简](.agents/skills/exam-regression/SKILL.md)：选择检查、保留行为断言。
+- [优化与文档更新](.agents/skills/exam-optimization-update/SKILL.md)：继续计划、记录净变化。
+
+- 对话出题任务使用 `agent/tasks.py` 的四个任务工具，缺参先澄清，单批 1—10 道单一题型。仅明确授权后保存；无有效证据、题目重复或独立证据校验失败均不得保存。任务结果来自工具状态。检查点按对话/课程隔离，批次保存按任务 ID 原子幂等；取消保留已保存结果。任务异常不得静默降级为普通问答。
+
+- 对话混合组卷位于 `agent/paper_tasks.py`，使用独立组卷工具白名单并共享 `question_bank.prepare_paper` 选择蓝图题目。先匹配当前有效证据，补题只生成草稿，独立校验后按授权保存。题数1—10，各题型分值明确，总分冲突先澄清；默认只复用，明确允许补题才生成。补题、试卷与任务批次必须单事务幂等保存，保存前检查资料和复用题更新时间；失败不留下半份写入。SSE `tool` 事件与最终 `tool_calls` 展示实际执行观察。
+
+
+复习目标使用 `src/services/agent/study_goals.py` 的当前对话计划层：限定讲解、自测、错项复习，隐藏未提交答案，按反馈调整剩余计划，完成前复核资料和过程条件。默认不保存，明确授权才调用原有题库保存链路；不推断掌握度，不增加跨会话记忆。完整契约见 `docs/04-后续演进规范.md`「对话复习目标」。
+
+作答提交后必须先执行 `assess_study_progress` 检查反馈；错项须有提交后的据源补讲，自动追加重测最多两次，新题不得重复已提交题干，反馈安排必须纳入完成条件。
+
+对话恢复通过按课程隔离的历史读取接口加载已发布消息和 `public_task` 脱敏检查点，禁止恢复时自动调用模型、泄露未提交答案或伪造历史工具记录；删除对话同时删除服务端检查点。
+
+配置模型下的身份、能力、帮助、交流和语义任务请求由 Agent 决策；`respond_to_user` 的非课程回复须独立核验，`create_task` 的结构化需求复用原任务链路。完整请求交流规则仅用于未配置/决策异常时的降级。混合课程问题仍据源回答，不能以交流掩盖取证失败。模型不授予保存或补题许可；询问保存方法和引用文字不是授权。交流及无任务澄清不覆盖课程意图、不消费检查点。两个对话 API 共用范围解析、执行与历史保存；契约见 docs/04-后续演进规范.md「Agent 交互与任务入口」。
+
+配置模型下的对话执行经 `agent/execution.py` 使用原生 LangGraph 检查点；每个工具为独立节点。节点边界暂停、单步与恢复使用同一 run/thread，不得以新规划冒充原图恢复。执行开始先原子预约对话，恢复采用租约防止并发；取消不可被失联后的重试撤销。节点观察与检查点历史只发布脱敏摘要，禁止提示词、原始资料、未提交答案出现在追踪 API。最终消息与执行发布标记原子提交；删除对话级联清理图检查点、写入与观察。普通问答降级必须进入可观测 fallback 节点，业务任务异常仍不得降级。完整契约见 docs/04「Agent 节点执行控制」。
