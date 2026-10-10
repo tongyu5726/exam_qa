@@ -15,6 +15,7 @@ const links = [
   { to: '/chat', label: '对话' },
   { to: '/documents', label: '资料' },
   { to: '/question-bank', label: '我的题库' },
+  { to: '/practice', label: '练习与复习' },
   { to: '/settings', label: '设置' },
 ]
 const themeLabels = { system: '跟随系统', light: '亮色', dark: '暗色' }

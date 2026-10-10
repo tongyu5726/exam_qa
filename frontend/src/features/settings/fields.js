@@ -18,5 +18,5 @@ export const groups = [
   ] },
   { id: 'proxy', title: '代理', fields: [f('enabled', '启用通用代理', 'boolean'), f('url', '通用代理地址'), f('hf_url', 'Hugging Face 专用代理地址'), f('github_url', 'GitHub 专用代理地址'), f('no_proxy', 'NO_PROXY')] },
   { id: 'app', title: '上传 / 日志', fields: [f('max_upload_mb', '最大上传 MB', 'number'), f('log_level', '日志等级', 'select', { options: select(['DEBUG', 'INFO', 'WARNING', 'ERROR']) })] },
-  { id: 'server', title: '服务', fields: [f('host', 'Host'), f('port', 'Port', 'number')] },
+  { id: 'server', title: '服务端口', fields: [] },
 ]

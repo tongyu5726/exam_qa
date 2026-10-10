@@ -2,17 +2,25 @@
 import { computed, ref } from 'vue'
 import MathAnswer from './MathAnswer.vue'
 import CitationList from './CitationList.vue'
+import StudyGoalCard from './StudyGoalCard.vue'
+import AgentTaskCard from './AgentTaskCard.vue'
+import AgentToolTrace from './AgentToolTrace.vue'
 
 const props = defineProps({
   turns: { type: Array, default: () => [] },
   live: { type: Object, default: null },
+  checkpoint: { type: Object, default: null },
   mode: { type: String, default: 'auto' },
   courseId: { type: String, default: '' },
+  busy: Boolean,
 })
 
+const emit = defineEmits(['followup'])
+const currentTaskIndex = computed(() => props.live?.agentTask || props.checkpoint?.task ? -1 : props.turns.findLastIndex((turn) => turn.agentTask))
 const streamBox = ref(null)
 const modeLabels = { auto: '自动识别', qa: '自由问答', concept: '知识点', chapter: '章节概览' }
-const modeLabel = (mode) => modeLabels[mode] || '自由问答'
+const isConversation = (turn) => turn.responseKind === 'conversation' || turn.intent?.task === 'conversation' || turn.task === 'conversation'
+const modeLabel = (turn) => isConversation(turn) ? '交流' : modeLabels[turn.mode] || '自由问答'
 const emptyText = computed(() => ({
   chapter: '选择课程后输入章节名，按章生成概览',
   concept: '选择课程后输入知识点，查看资料依据',
@@ -25,7 +33,7 @@ function cleanAnswer(answer, citations = []) {
 
 function liveAnswer(turn) {
   return cleanAnswer(turn.answer, turn.citations) || ({
-    retrieving: '检索中…', reasoning: '模型正在推理…', routing: '正在识别意图…',
+    retrieving: '检索中…', reasoning: '模型正在推理…', routing: '正在理解请求…', working: '正在执行…',
   }[turn.phase] || '生成中…')
 }
 
@@ -38,22 +46,35 @@ defineExpose({ scrollEnd })
 
 <template>
   <div ref="streamBox" class="chat-stream" role="log" aria-label="对话内容">
-    <div v-if="!turns.length && !live" class="chat-empty">
+    <div v-if="!turns.length && !live && !checkpoint" class="chat-empty">
       <p>{{ emptyText }}</p>
       <p>检索已启用向量 + BM25 混合召回</p>
     </div>
     <article v-for="(turn, index) in turns" :key="index" class="chat-turn">
-      <div class="question-bubble"><span>{{ modeLabel(turn.mode) }}</span><p>{{ turn.question }}</p></div>
-      <div class="answer-bubble" :data-grounded="turn.grounded">
+      <div class="question-bubble"><span>{{ modeLabel(turn) }}</span><p>{{ turn.question }}</p><small v-if="turn.scope && !isConversation(turn)">查询范围：{{ turn.intent?.scenario || turn.scope.scenario || 'all' }} · {{ turn.intent?.as_of || turn.scope.as_of || '不限日期' }}</small></div>
+      <div class="answer-bubble" :data-grounded="isConversation(turn) ? null : turn.grounded">
         <MathAnswer :text="cleanAnswer(turn.answer, turn.citations)" final />
         <CitationList :citations="turn.citations" :course-id="courseId" />
+        <AgentToolTrace :calls="turn.toolCalls || []" :agentic="turn.agentic" :has-task="!!turn.agentTask" />
+        <StudyGoalCard v-if="turn.agentTask?.kind === 'study_goal'" :task="turn.agentTask" :busy="busy" :current="index === currentTaskIndex" :course-id="courseId" @followup="emit('followup', $event)" />
+        <AgentTaskCard v-else-if="turn.agentTask" :task="turn.agentTask" :busy="busy" :current="index === currentTaskIndex" :agentic="turn.agentic" @followup="emit('followup', $event)" />
+      </div>
+    </article>
+    <article v-if="checkpoint?.task && !live" class="chat-turn" aria-label="已恢复的任务检查点">
+      <div class="answer-bubble">
+        <p>{{ checkpoint.hint }}</p>
+        <StudyGoalCard v-if="checkpoint.task.kind === 'study_goal'" :task="checkpoint.task" :busy="busy" current resumed :course-id="courseId" @followup="emit('followup', $event)" />
+        <AgentTaskCard v-else :task="checkpoint.task" :busy="busy" current resumed @followup="emit('followup', $event)" />
       </div>
     </article>
     <article v-if="live" class="chat-turn">
-      <div class="question-bubble"><span>{{ modeLabel(live.mode) }}</span><p>{{ live.question }}</p></div>
-      <div class="answer-bubble" :data-grounded="live.grounded">
+      <div class="question-bubble"><span>{{ modeLabel(live) }}</span><p>{{ live.question }}</p></div>
+      <div class="answer-bubble" :data-grounded="isConversation(live) ? null : live.grounded">
         <MathAnswer :text="liveAnswer(live)" :final="live.final" />
         <CitationList :citations="live.citations" :course-id="courseId" />
+        <AgentToolTrace :calls="live.toolCalls || []" :agentic="live.agentic" :has-task="!!live.agentTask" />
+        <StudyGoalCard v-if="live.agentTask?.kind === 'study_goal'" :task="live.agentTask" :busy="busy" current :course-id="courseId" @followup="emit('followup', $event)" />
+        <AgentTaskCard v-else-if="live.agentTask" :task="live.agentTask" :busy="busy" current :agentic="live.agentic" @followup="emit('followup', $event)" />
       </div>
     </article>
   </div>

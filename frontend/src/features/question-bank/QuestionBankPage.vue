@@ -1,6 +1,6 @@
 <script setup>
-import { ref, watch, onUnmounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { computed, ref, watch, onUnmounted } from 'vue'
+import { RouterLink, useRoute } from 'vue-router'
 import { NButton, useMessage } from 'naive-ui'
 import { apiGet, apiPost } from '@/api/client.js'
 import { useCourseStore } from '@/stores/course.js'
@@ -8,12 +8,17 @@ import GenerationForm from './GenerationForm.vue'
 import QuestionList from './QuestionList.vue'
 import PaperForm from './PaperForm.vue'
 import BlueprintForm from './BlueprintForm.vue'
+import PaperDetail from './PaperDetail.vue'
 
 const course = useCourseStore()
 const route = useRoute()
 const message = useMessage()
 const questions = ref([])
+const visibleQuestions = computed(() => route.query.question_id ? questions.value.filter((q) => q.id === route.query.question_id) : questions.value)
 const papers = ref([])
+const focusedPaper = ref(null)
+const paperError = ref('')
+const paperLoading = ref(false)
 const selected = ref([])
 const loading = ref(false)
 const busy = ref('')
@@ -38,6 +43,18 @@ async function load(courseId) {
   finally { if (course.currentId === courseId) loading.value = false }
 }
 watch(() => course.currentId, load, { immediate: true })
+watch([() => course.currentId, () => route.query.paper_id], async ([courseId, paperId], _, onCleanup) => {
+  focusedPaper.value = null; paperError.value = ''; paperLoading.value = false
+  if (!courseId || !paperId) return
+  const request = new AbortController()
+  onCleanup(() => request.abort())
+  paperLoading.value = true
+  try {
+    const paper = await apiGet(`/question-bank/papers/${encodeURIComponent(String(paperId))}`, { course_id: courseId }, request.signal)
+    if (!request.signal.aborted) focusedPaper.value = paper
+  } catch (cause) { if (cause.name !== 'AbortError') paperError.value = cause.message }
+  finally { if (!request.signal.aborted) paperLoading.value = false }
+}, { immediate: true })
 onUnmounted(() => controller?.abort())
 function toggle(id, checked) { selected.value = checked ? [...selected.value, id] : selected.value.filter((item) => item !== id) }
 async function generate(payload) {
@@ -78,14 +95,18 @@ async function assemble(payload) {
   <div class="page bank-page">
     <header class="page-header"><p class="eyebrow">MY QUESTION BANK</p><h1>我的题库</h1><p>先取证，再出题。题目与试卷按当前课程隔离，每一道题都应有所依据。</p></header>
     <div v-if="route.query.topic" class="panel routed-topic">来自问答的主题：{{ route.query.topic }} <NButton text type="primary" @click="$router.replace({ name: 'question-bank' })">关闭提示</NButton></div>
+    <div v-if="route.query.question_id" class="panel routed-topic">来自对话任务的题目 <NButton text type="primary" @click="$router.replace({ name: 'question-bank' })">查看全部题目</NButton></div>
+    <div v-if="route.query.paper_id" class="panel routed-topic">来自对话任务的试卷 <NButton text type="primary" @click="$router.replace({ name: 'question-bank' })">关闭试卷详情</NButton></div>
+    <p v-if="paperLoading" role="status">读取试卷中…</p><p v-if="paperError" role="alert" class="error-text">{{ paperError }}</p>
+    <PaperDetail v-if="focusedPaper" :paper="focusedPaper" :course-id="course.currentId" />
     <p v-if="error" role="alert" class="error-text">{{ error }} <NButton text @click="load(course.currentId)">重试</NButton></p>
     <div class="bank-grid">
       <section class="panel"><h2>按资料出题</h2><GenerationForm :busy="busy === 'generate'" :initial-topic="String(route.query.topic || '')" @submit="generate" /></section>
       <section class="panel"><h2>保存试卷</h2><PaperForm ref="paperForm" :busy="busy === 'paper'" :selected-count="selected.length" @submit="savePaper" /></section>
     </div>
     <section class="panel"><p class="eyebrow section-eyebrow">CONTROLLED ASSEMBLY</p><h2>按蓝图自动组卷</h2><BlueprintForm :busy="busy === 'assemble'" @submit="assemble" /></section>
-    <section class="panel"><div class="section-head"><h2>题目草稿</h2><span class="muted">{{ loading ? '读取中…' : `${questions.length} 道题` }}</span></div><QuestionList :questions="questions" :selected="selected" @toggle="toggle" /></section>
-    <section class="panel"><div class="section-head"><h2>已保存试卷</h2><span class="muted">{{ papers.length }} 份</span></div><p v-if="!papers.length" class="empty">尚未保存试卷</p><div v-else class="paper-list"><article v-for="paper in papers" :key="paper.id" class="paper-item"><h3>{{ paper.title }}</h3><p>{{ paper.question_count }} 道题 · {{ paper.total_score }} 分</p><p v-if="paper.description" class="muted">{{ paper.description }}</p></article></div></section>
+    <section class="panel"><div class="section-head"><h2>题目草稿</h2><span class="muted">{{ loading ? '读取中…' : `${visibleQuestions.length} 道题` }}</span></div><QuestionList :questions="visibleQuestions" :selected="selected" @toggle="toggle" /></section>
+    <section class="panel"><div class="section-head"><h2>已保存试卷</h2><span class="muted">{{ papers.length }} 份</span></div><p v-if="!papers.length" class="empty">尚未保存试卷</p><div v-else class="paper-list"><article v-for="paper in papers" :key="paper.id" class="paper-item"><h3><RouterLink :to="{ name: 'question-bank', query: { paper_id: paper.id } }">{{ paper.title }}</RouterLink></h3><p>{{ paper.question_count }} 道题 · {{ paper.total_score }} 分</p><p v-if="paper.description" class="muted">{{ paper.description }}</p></article></div></section>
   </div>
 </template>
 

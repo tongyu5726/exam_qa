@@ -20,8 +20,8 @@ const percent = computed(() => measuredPercent(props.embedding.warmup?.percent))
       <span>正在检查、下载或装载模型，此阶段暂时无法计算百分比。</span>
     </div>
     <p v-if="embedding.warmup?.error" class="error-text">{{ embedding.warmup.error }}</p>
-    <p class="muted">更改模型参数后请先保存，再开始预热。</p>
-    <NButton :disabled="running" @click="emit('warmup')">{{ provider === 'local' ? '拉取并加载模型' : '探测连通性' }}</NButton>
+    <p class="muted">{{ provider === 'local' ? '启动时自动加载本地缓存；缓存不完整时，点击加载模型补齐下载。更改参数后请先保存。' : '更改模型参数后请先保存，再开始预热。' }}</p>
+    <NButton :disabled="running || (provider === 'local' && embedding.status === 'ok')" @click="emit('warmup')">{{ provider === 'local' ? '加载模型' : '探测连通性' }}</NButton>
   </div>
 </template>
 

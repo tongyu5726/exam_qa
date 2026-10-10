@@ -5,6 +5,7 @@ const routes = [
   { path: '/chat', name: 'chat', component: () => import('@/features/chat/ChatPage.vue'), meta: { title: '对话' } },
   { path: '/documents', name: 'documents', component: () => import('@/features/documents/DocumentsPage.vue'), meta: { title: '资料' } },
   { path: '/question-bank', name: 'question-bank', component: () => import('@/features/question-bank/QuestionBankPage.vue'), meta: { title: '我的题库' } },
+  { path: '/practice', name: 'practice', component: () => import('@/features/practice/PracticePage.vue'), meta: { title: '练习与复习' } },
   { path: '/settings', name: 'settings', component: () => import('@/features/settings/SettingsPage.vue'), meta: { title: '设置' } },
   { path: '/:pathMatch(.*)*', redirect: '/chat' },
 ]

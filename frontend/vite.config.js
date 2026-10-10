@@ -1,14 +1,14 @@
 import { fileURLToPath, URL } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
 import vue from '@vitejs/plugin-vue'
 
-export default defineConfig({
+export default defineConfig(({ mode }) => ({
   base: '/sz/',
   plugins: [vue()],
   resolve: { alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) } },
   server: {
     port: 5173,
-    proxy: { '/api/v1': 'http://127.0.0.1:8787' },
+    proxy: { '/api/v1': `http://127.0.0.1:${loadEnv(mode, fileURLToPath(new URL('..', import.meta.url)), '').PORT || 8787}` },
   },
   build: { outDir: '../www-dist', emptyOutDir: true },
-})
+}))

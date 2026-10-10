@@ -7,6 +7,7 @@ import ConfigGroupForm from './ConfigGroupForm.vue'
 import MirrorSettingsForm from './MirrorSettingsForm.vue'
 import EmbeddingStatus from './EmbeddingStatus.vue'
 import ProviderManager from './ProviderManager.vue'
+import PortSettingsForm from './PortSettingsForm.vue'
 
 const message = useMessage()
 const cfg = ref(null)
@@ -58,7 +59,8 @@ onUnmounted(() => { if (pollTimer) clearInterval(pollTimer) })
         <p v-if="active === 'proxy'" class="proxy-note">下载镜像与 HTTP 代理是两种地址。Hugging Face 镜像用于模型下载；GitHub 加速服务用于生成公开文件链接，当前服务不自动下载 GitHub 文件。</p>
         <ProviderManager v-if="active === 'llm'" :providers="cfg.llm?.providers || []" :active="cfg.llm?.active || ''" :formats="cfg.llm?.formats || ['openai', 'local']" :writable="cfg.meta?.env_writable !== false" @changed="load" />
         <section v-if="active === 'proxy'" class="settings-section"><h3>公开下载镜像</h3><MirrorSettingsForm :data="cfg.proxy || {}" :busy="busy" :writable="cfg.meta?.env_writable !== false" @save="save" /></section>
-        <section class="settings-section"><h3>{{ active === 'llm' ? '生成参数' : active === 'proxy' ? 'HTTP 代理参数' : `${group.title}参数` }}</h3><p v-if="active === 'proxy'" class="muted proxy-field-note">填入正在运行的 HTTP 代理服务地址，如本机代理软件的 http://127.0.0.1:7890。站点专用地址留空时沿用通用代理。</p><ConfigGroupForm :key="active" :group="group" :data="cfg[active] || {}" :busy="busy" :writable="cfg.meta?.env_writable !== false" @save="save" /></section>
+        <section v-if="active === 'server'" class="settings-section"><h3>端口选择</h3><PortSettingsForm :data="cfg.server || {}" :busy="busy" :writable="cfg.meta?.env_writable !== false" @save="save" /></section>
+        <section v-else class="settings-section"><h3>{{ active === 'llm' ? '生成参数' : active === 'proxy' ? 'HTTP 代理参数' : `${group.title}参数` }}</h3><p v-if="active === 'proxy'" class="muted proxy-field-note">填入正在运行的 HTTP 代理服务地址，如本机代理软件的 http://127.0.0.1:7890。站点专用地址留空时沿用通用代理。</p><ConfigGroupForm :key="active" :group="group" :data="cfg[active] || {}" :busy="busy" :writable="cfg.meta?.env_writable !== false" @save="save" /></section>
         <EmbeddingStatus v-if="active === 'embedding'" :embedding="embedding || {}" :provider="cfg.embedding?.provider || 'local'" @warmup="warmup" />
         <p v-if="effectsText" class="settings-effects">{{ effectsText }}</p>
       </main><div v-else class="panel">读取配置中…</div></div>

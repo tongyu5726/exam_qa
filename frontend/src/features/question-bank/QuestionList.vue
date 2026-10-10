@@ -1,5 +1,6 @@
 <script setup>
 import { NCheckbox, NTag } from 'naive-ui'
+import { RouterLink } from 'vue-router'
 
 defineProps({ questions: { type: Array, default: () => [] }, selected: { type: Array, default: () => [] } })
 const emit = defineEmits(['toggle'])
@@ -13,8 +14,8 @@ const emit = defineEmits(['toggle'])
       <div>
         <h3>{{ item.stem }}</h3>
         <ol v-if="item.options?.length"><li v-for="option in item.options" :key="option">{{ option }}</li></ol>
-        <p>答案：{{ item.answer }}</p>
-        <p v-if="item.analysis" class="muted">解析：{{ item.analysis }}</p>
+        <RouterLink :to="{ name: 'practice', query: { question: item.id } }">开始练习</RouterLink>
+        <details><summary>查看答案与解析</summary><p>答案：{{ item.answer }}</p><p v-if="item.analysis" class="muted">解析：{{ item.analysis }}</p></details>
         <div class="question-tags"><NTag size="small">{{ item.question_type }}</NTag><NTag size="small">{{ item.difficulty }}</NTag><NTag size="small">{{ item.status }}</NTag><NTag v-if="item.chapter" size="small">{{ item.chapter }}</NTag><NTag v-if="item.citations?.length" size="small" type="success">{{ item.citations.length }} 条资料依据</NTag></div>
       </div>
     </article>
