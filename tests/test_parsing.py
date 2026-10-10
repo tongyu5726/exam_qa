@@ -169,6 +169,38 @@ class TestMineruMapping:
 
 
 class TestPdfQualityAndFallback:
+    @pytest.mark.parametrize("first_ocr_fails,expected_calls", [(False, 1), (True, 2)])
+    def test_low_quality_successful_ocr_is_reused_but_failure_can_retry(self, monkeypatch, first_ocr_fails, expected_calls):
+        from types import SimpleNamespace
+        from src.config import config
+        from src.services import parsing
+
+        calls = []
+        def parse(_path, force_ocr=False):
+            if force_ocr:
+                calls.append("ocr")
+                if first_ocr_fails and len(calls) == 1:
+                    raise RuntimeError("temporary OCR failure")
+            return parsing.ParsedDocument([parsing.ParsedPage(page=1, text="OCR" if force_ocr else "native")])
+
+        monkeypatch.setattr(config.parsing, "pdf_parser", "pymupdf")
+        monkeypatch.setattr(config.parsing, "pdf_use_ocr", True)
+        monkeypatch.setattr(config.parsing, "pdf_force_ocr", False)
+        monkeypatch.setattr(config.parsing, "pdf_quality_threshold", .9)
+        monkeypatch.setattr(strategy, "_pdf_kind", lambda _: "text")
+        monkeypatch.setattr(strategy, "_pdf_page_count", lambda _: 1)
+        monkeypatch.setattr(strategy, "_parse_pdf_pymupdf4llm", parse)
+        monkeypatch.setattr(strategy, "_enrich_document_with_formulas", lambda doc, _: doc)
+        monkeypatch.setattr(strategy, "_parse_pdf_fitz", lambda _: parsing.ParsedDocument([
+            parsing.ParsedPage(page=1, text="fitz")]))
+        monkeypatch.setattr(strategy, "_assess_pdf_quality", lambda doc, **_: SimpleNamespace(
+            score={"native": .1, "OCR": .4, "fitz": .2}.get(doc.full_text, 0) if doc else 0))
+        monkeypatch.setattr(strategy, "_log_pdf_quality", lambda *_: None)
+        output = strategy._parse_pdf("fake.pdf")
+        assert output.full_text == "OCR"
+        assert output.parse_quality == .4
+        assert len(calls) == expected_calls
+
     def test_quality_rewards_page_coverage_and_structure(self):
         from src.services import parsing
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import logging
+import os
 import threading
-from functools import lru_cache
+from functools import lru_cache, partial
+from pathlib import Path
 from typing import Any, Protocol, runtime_checkable
 
 from src.config import EmbeddingConfig, LLMConfig, config
@@ -13,6 +15,24 @@ from src.services.inference_device import load_torch_model, run_torch_inference
 logger = logging.getLogger(__name__)
 
 _BATCH_SIZE = 64
+
+
+class _LocalCacheMiss(FileNotFoundError):
+    """启动只读缓存时缺少模型文件；由手动预热补齐。"""
+
+
+def _cached_model_path(model: str) -> str:
+    """解析缓存快照目录，避免第三方库按仓库名探测远端元数据。"""
+    directory = Path(model).expanduser()
+    if directory.is_dir():
+        return str(directory.resolve())
+    from huggingface_hub import snapshot_download
+
+    repo_id = model if "/" in model else f"sentence-transformers/{model}"
+    return snapshot_download(
+        repo_id, local_files_only=True,
+        cache_dir=os.getenv("SENTENCE_TRANSFORMERS_HOME") or None,
+    )
 
 # ponytail: 单槽进度；配置热更新用 generation 丢弃过期线程的写入
 _progress_lock = threading.Lock()
@@ -154,7 +174,7 @@ def _patch_hub_tqdm(progress_cls: type):
     return mod, hub_utils, old_mod, old_utils
 
 
-def _load_local_with_progress(client: LocalEmbeddingClient, *, gen: int) -> None:
+def _load_local_with_progress(client: LocalEmbeddingClient, *, gen: int, local_only: bool = False) -> None:
     import importlib
 
     mod = importlib.import_module("huggingface_hub.utils.tqdm")
@@ -164,24 +184,25 @@ def _load_local_with_progress(client: LocalEmbeddingClient, *, gen: int) -> None
         _set_progress(
             phase="running",
             percent=None,
-            message=f"拉取 {client.model}…",
+            message=f"加载本地缓存 {client.model}…",
             error=None,
             provider=client.provider,
             model=client.model,
             gen=gen,
         )
-        client._load(gen=gen)
+        client._load(gen=gen, local_only=local_only)
         _mark_ready(client, gen=gen)
-    except Exception as e:
+    except _LocalCacheMiss:
+        raise
+    except Exception:
         logger.exception("本地 Embedding 加载失败")
-        _mark_error(client, e, gen=gen)
         raise
     finally:
         mod.tqdm = old_mod
         hub_utils.tqdm = old_utils
 
 
-def warmup_with_progress(client: EmbeddingClient, *, gen: int | None = None) -> dict[str, Any]:
+def warmup_with_progress(client: EmbeddingClient, *, gen: int | None = None, local_only: bool = False) -> dict[str, Any]:
     if gen is None:
         with _progress_lock:
             gen = _warmup_gen
@@ -196,17 +217,23 @@ def warmup_with_progress(client: EmbeddingClient, *, gen: int | None = None) -> 
     )
     try:
         if isinstance(client, LocalEmbeddingClient):
-            _load_local_with_progress(client, gen=gen)
+            _load_local_with_progress(client, gen=gen, local_only=local_only)
         else:
             client.warmup()
             _mark_ready(client, gen=gen)
+    except _LocalCacheMiss:
+        _set_progress(
+            phase="idle", percent=None, error=None,
+            message="本地缓存不完整，请点击加载模型下载缺失文件，或配置完整模型目录",
+            gen=gen,
+        )
     except Exception as e:
         _mark_error(client, e, gen=gen)
         raise
     return get_warmup_progress()
 
 
-def start_warmup_background(client: EmbeddingClient) -> dict[str, Any]:
+def start_warmup_background(client: EmbeddingClient, *, local_only: bool = False) -> dict[str, Any]:
     global _warmup_thread
     with _progress_lock:
         gen = _warmup_gen
@@ -221,35 +248,31 @@ def start_warmup_background(client: EmbeddingClient) -> dict[str, Any]:
 
         if client.status() == "ok":
             _progress.update(
-                {
-                    "phase": "ok",
-                    "percent": 100,
-                    "message": "向量化已就绪",
-                    "error": None,
-                    "provider": client.provider,
-                    "model": client.model,
-                }
+                phase="ok",
+                percent=100,
+                message="向量化已就绪",
+                error=None,
+                provider=client.provider,
+                model=client.model,
             )
             return dict(_progress)
 
         def _run() -> None:
             try:
-                warmup_with_progress(client, gen=gen)
+                warmup_with_progress(client, gen=gen, local_only=local_only)
             except Exception:
-                pass
+                logger.exception("Embedding 后台预热失败")
 
         _warmup_thread = threading.Thread(
             target=_run, name="embedding-warmup", daemon=True
         )
         _progress.update(
-            {
-                "phase": "running",
-                "percent": None,
-                "message": "开始拉取…" if client.provider == "local" else "探测中…",
-                "error": None,
-                "provider": client.provider,
-                "model": client.model,
-            }
+            phase="running",
+            percent=None,
+            message="加载本地缓存…" if client.provider == "local" else "探测中…",
+            error=None,
+            provider=client.provider,
+            model=client.model,
         )
         _warmup_thread.start()
         return dict(_progress)
@@ -262,14 +285,12 @@ def clear_warmup_progress() -> None:
         _warmup_gen += 1
         _warmup_thread = None
         _progress.update(
-            {
-                "phase": "idle",
-                "percent": None,
-                "message": "",
-                "error": None,
-                "provider": "",
-                "model": "",
-            }
+            phase="idle",
+            percent=None,
+            message="",
+            error=None,
+            provider="",
+            model="",
         )
 
 
@@ -296,8 +317,13 @@ class LocalEmbeddingClient:
         self.model = model_name
         self.device = device
         self._model = None
+        self._load_lock = threading.Lock()
 
-    def _load(self, *, gen: int | None = None):
+    def _load(self, *, gen: int | None = None, local_only: bool = False):
+        with self._load_lock:
+            self._load_model(gen=gen, local_only=local_only)
+
+    def _load_model(self, *, gen: int | None = None, local_only: bool = False):
         if self._model is not None:
             return
 
@@ -323,6 +349,21 @@ class LocalEmbeddingClient:
 
         from src.services.http_client import configure_hf_http_client
 
+        # 每次进程启动先离线加载，完整缓存不探测远端、不依赖代理或镜像。
+        try:
+            self._model = load_torch_model(
+                partial(SentenceTransformer, local_files_only=True),
+                _cached_model_path(self.model), self.device,
+            )
+        except OSError as missing:
+            if local_only:
+                raise _LocalCacheMiss(str(missing)) from missing
+            logger.info("Embedding 缓存缺少文件，开始下载: %s", self.model)
+        else:
+            logger.info("Embedding 已从本地缓存加载: %s", self.model)
+            return
+
+        _set_progress(message=f"下载缺失模型文件 {self.model}…", gen=gen)
         configure_hf_http_client()
 
         def _fit() -> None:
@@ -371,6 +412,18 @@ class LocalEmbeddingClient:
 
     def status(self) -> str:
         return "ok" if self._model is not None else "not_ready"
+
+    def supports_query(self, text: str) -> bool | None:
+        """识别查询全部变成未知词的模型；不加载模型或访问网络。"""
+        tokenizer = getattr(self._model, "tokenizer", None)
+        unknown = getattr(tokenizer, "unk_token_id", None)
+        if not isinstance(unknown, int):
+            return None
+        words = "".join(char if char.isalnum() else " " for char in text)
+        ids = tokenizer(words, add_special_tokens=False)["input_ids"]
+        if not isinstance(ids, list) or not ids:
+            return None
+        return any(token != unknown for token in ids)
 
     def health_check(self) -> bool:
         return self.status() == "ok"

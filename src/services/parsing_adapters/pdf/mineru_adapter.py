@@ -7,7 +7,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from src.services.parsing_adapters.blocks import _CAPTION_TYPES, _annotate_block, _as_bbox, _caption_text, _persist_parser_assets, _resolve_image_path
+from src.services.parsing_adapters.blocks import _CAPTION_TYPES, _annotate_block, _as_bbox, _caption_text, _line_texts, _persist_parser_assets, _resolve_image_path
 from src.services.parsing_adapters.commands import _command_error_tail, _run_capture
 from src.services.parsing_adapters.enrichment.formula import _formula_latex
 from src.services.parsing_adapters.models import ParsedBlock, ParsedDocument, ParsedPage
@@ -55,15 +55,7 @@ def _block_text(block: dict) -> str:
     text = block.get("text") or ""
     if text:
         return text
-    parts = []
-    for ln in block.get("lines") or []:
-        if isinstance(ln, dict):
-            t = ln.get("text") or ln.get("content") or ""
-        else:
-            t = str(ln)
-        if t.strip():
-            parts.append(t.strip())
-    return "\n".join(parts)
+    return "\n".join(_line_texts(block))
 
 
 def _blocks_to_pages(blocks: list[ParsedBlock]) -> list[ParsedPage]:
@@ -152,74 +144,39 @@ def _mineru_json_to_document(content: dict, *, base_dir: Path | None = None) -> 
 
         if btype in _CAPTION_TYPES:
             continue  # 已挂载或进入 orphan_captions
+        extra: dict = {}
         if btype == "table":
             html = block.get("html") or ""
             text = (block.get("text") or "").strip() or _html_table_to_text(html)
-            blocks.append(
-                _annotate_block(ParsedBlock(
-                    block_type="table",
-                    text=text,
-                    page=page,
-                    html=html,
-                    caption=caption_by_target.get(seq, ""),
-                    order=order,
-                    bbox=_as_bbox(block.get("bbox")),
-                    pdf_page_label=page_label,
-                ))
-            )
+            extra = {"html": html, "caption": caption_by_target.get(seq, "")}
         elif btype == "image":
-            blocks.append(
-                _annotate_block(ParsedBlock(
-                    block_type="image",
-                    text=(block.get("text") or "").strip(),
-                    page=page,
-                    image_path=_resolve_image_path(block.get("img_path"), base_dir),
-                    caption=caption_by_target.get(seq, ""),
-                    order=order,
-                    bbox=_as_bbox(block.get("bbox")),
-                    pdf_page_label=page_label,
-                ))
-            )
+            text = (block.get("text") or "").strip()
+            extra = {
+                "image_path": _resolve_image_path(block.get("img_path"), base_dir),
+                "caption": caption_by_target.get(seq, ""),
+            }
         elif btype in ("formula", "formula_inline"):
             latex = _formula_latex(block)
-            blocks.append(
-                _annotate_block(ParsedBlock(
-                    block_type=btype,
-                    text=f"$${latex}$$" if latex else "",
-                    page=page,
-                    latex=latex,
-                    order=order,
-                    bbox=_as_bbox(block.get("bbox")),
-                    pdf_page_label=page_label,
-                ))
-            )
+            text = f"$${latex}$$" if latex else ""
+            extra = {"latex": latex}
         elif btype == "title":
             try:
                 level = int(block.get("level") or 1)
             except (TypeError, ValueError):
                 level = 1
-            blocks.append(
-                _annotate_block(ParsedBlock(
-                    block_type="title",
-                    text=(block.get("text") or "").strip(),
-                    page=page,
-                    level=level,
-                    order=order,
-                    bbox=_as_bbox(block.get("bbox")),
-                    pdf_page_label=page_label,
-                ))
-            )
+            text = (block.get("text") or "").strip()
+            extra = {"level": level}
         else:
-            blocks.append(
-                _annotate_block(ParsedBlock(
-                    block_type=btype,
-                    text=_block_text(block).strip(),
-                    page=page,
-                    order=order,
-                    bbox=_as_bbox(block.get("bbox")),
-                    pdf_page_label=page_label,
-                ))
-            )
+            text = _block_text(block).strip()
+        blocks.append(_annotate_block(ParsedBlock(
+            block_type=btype,
+            text=text,
+            page=page,
+            order=order,
+            bbox=_as_bbox(block.get("bbox")),
+            pdf_page_label=page_label,
+            **extra,
+        )))
 
     for seq, page, text in orphan_captions:
         blocks.append(_annotate_block(ParsedBlock(block_type="caption", text=text, page=page, order=seq)))

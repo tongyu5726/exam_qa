@@ -26,6 +26,25 @@ _EVIDENCE_DEFAULTS = {
 }
 
 
+_TEXT_METADATA_DEFAULTS = {
+    **dict.fromkeys((
+        "chapter", "block_type", "section_path", "table_headers", "context", "bbox",
+        "pdf_page_label", "textbook_references", "image_path", "image_caption",
+        "parser_name", "source_version",
+    ), ""),
+    "content_role": "content",
+    **{name: _EVIDENCE_DEFAULTS[name] for name in (
+        "effective_from", "effective_to", "authority_label", "applicability_scope", "metadata_source",
+    )},
+}
+
+
+def _text_metadata(meta: dict, *, stringify: bool = False) -> dict:
+    """共享文本字段默认值；写入转字符串，读取保留旧库中的原始类型。"""
+    values = {name: meta.get(name) or default for name, default in _TEXT_METADATA_DEFAULTS.items()}
+    return {name: str(value) for name, value in values.items()} if stringify else values
+
+
 def _date_sort_value(value: str | None, default: int) -> int:
     """Chroma 的范围比较只接受数值；日期字段仍以 ISO 字符串对外呈现。"""
     digits = "".join(char for char in str(value or "") if char.isdigit())
@@ -160,28 +179,11 @@ class ChromaVectorStore:
                 "course_id": course_id,
                 "college_id": chunk.get("college_id", ""),
                 "page": chunk.get("page") if chunk.get("page") is not None else -1,
-                "chapter": str(chunk.get("chapter") or ""),
-                "block_type": str(chunk.get("block_type") or ""),
-                "section_path": str(chunk.get("section_path") or ""),
-                "table_headers": str(chunk.get("table_headers") or ""),
-                "context": str(chunk.get("context") or ""),
-                "bbox": str(chunk.get("bbox") or ""),
-                "pdf_page_label": str(chunk.get("pdf_page_label") or ""),
-                "textbook_references": str(chunk.get("textbook_references") or ""),
-                "content_role": str(chunk.get("content_role") or "content"),
-                "image_path": str(chunk.get("image_path") or ""),
-                "image_caption": str(chunk.get("image_caption") or ""),
-                "parser_name": str(chunk.get("parser_name") or ""),
+                **_text_metadata(chunk, stringify=True),
                 "parse_quality": float(chunk.get("parse_quality") or 0.0),
                 "is_active": bool(chunk.get("is_active", True)),
-                "source_version": str(chunk.get("source_version") or ""),
-                "effective_from": str(chunk.get("effective_from") or "0001-01-01"),
-                "effective_to": str(chunk.get("effective_to") or "9999-12-31"),
                 "authority_level": int(chunk.get("authority_level") or 30),
-                "authority_label": str(chunk.get("authority_label") or "教学材料"),
-                "applicability_scope": str(chunk.get("applicability_scope") or "all"),
                 "metadata_confidence": float(chunk.get("metadata_confidence") or 0.0),
-                "metadata_source": str(chunk.get("metadata_source") or "auto"),
                 "effective_from_sort": _date_sort_value(
                     chunk.get("effective_from"), 10101
                 ),
@@ -296,27 +298,10 @@ class ChromaVectorStore:
                 "course_id": meta.get("course_id", ""),
                 "college_id": meta.get("college_id", ""),
                 "page": page,
-                "chapter": meta.get("chapter") or "",
-                "block_type": meta.get("block_type") or "",
-                "section_path": meta.get("section_path") or "",
-                "table_headers": meta.get("table_headers") or "",
-                "context": meta.get("context") or "",
-                "image_path": meta.get("image_path") or "",
-                "image_caption": meta.get("image_caption") or "",
-                "bbox": meta.get("bbox") or "",
-                "pdf_page_label": meta.get("pdf_page_label") or "",
-                "textbook_references": meta.get("textbook_references") or "",
-                "content_role": meta.get("content_role") or "content",
-                "parser_name": meta.get("parser_name") or "",
+                **_text_metadata(meta),
                 "parse_quality": float(meta.get("parse_quality") or 0.0),
-                "source_version": meta.get("source_version") or "",
-                "effective_from": meta.get("effective_from") or "0001-01-01",
-                "effective_to": meta.get("effective_to") or "9999-12-31",
                 "authority_level": int(meta.get("authority_level") or 30),
-                "authority_label": meta.get("authority_label") or "教学材料",
-                "applicability_scope": meta.get("applicability_scope") or "all",
                 "metadata_confidence": float(meta.get("metadata_confidence") or 0.0),
-                "metadata_source": meta.get("metadata_source") or "auto",
             },
         }
 
@@ -344,7 +329,7 @@ class ChromaVectorStore:
             target = _date_sort_value(as_of, 0)
             clauses.append({"effective_from_sort": {"$lte": target}})
             clauses.append({"effective_to_sort": {"$gte": target}})
-        return clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        return {"$and": clauses}
 
     def get_chunks(
         self,
@@ -364,57 +349,15 @@ class ChromaVectorStore:
         """
         if not course_id:
             raise ValueError("get_chunks 必须提供 course_id，禁止全库读取")
-        clauses: list[dict] = [{"course_id": course_id}, {"is_active": True}]
+        where = self._evidence_where(course_id, block_type=block_type, scenario=scenario, as_of=as_of)
+        clauses = where["$and"]
         if doc_id:
             clauses.append({"doc_id": str(doc_id)})
         if source_file:
             clauses.append({"source_file": source_file})
         if page is not None:
             clauses.append({"page": int(page)})
-        if block_type:
-            clauses.append({"block_type": block_type})
-        if scenario and scenario != "all":
-            clauses.append(
-                {
-                    "$or": [
-                        {"applicability_scope": scenario},
-                        {"applicability_scope": "all"},
-                    ]
-                }
-            )
-        if as_of:
-            clauses.extend(
-                [
-                    {"effective_from_sort": {"$lte": _date_sort_value(as_of, 0)}},
-                    {"effective_to_sort": {"$gte": _date_sort_value(as_of, 0)}},
-                ]
-            )
-        where: dict = clauses[0] if len(clauses) == 1 else {"$and": clauses}
-        if self._collection.count() == 0:
-            return []
-        try:
-            results = self._collection.get(
-                where=where,
-                include=["documents", "metadatas"],
-                limit=limit,
-            )
-        except Exception as e:
-            logger.error("按条件读取向量失败: %s", e)
-            raise ServiceUnavailableException(
-                "向量读取失败", detail=str(e)
-            ) from e
-
-        ids = results.get("ids") or []
-        documents = results.get("documents") or []
-        metadatas = results.get("metadatas") or []
-        hits = [
-            self._normalize_hit(
-                ids[i],
-                documents[i] if i < len(documents) else "",
-                (metadatas[i] if i < len(metadatas) else None) or {},
-            )
-            for i in range(len(ids))
-        ]
+        hits = self._read_hits(where, limit=limit)
         hits.sort(key=lambda h: int((h.get("metadata") or {}).get("chunk_index") or 0))
         return hits
 
@@ -502,19 +445,28 @@ class ChromaVectorStore:
             ) from e
         return len(ids)
 
-    def get_by_course_id(self, course_id: str) -> list[dict]:
+    def get_by_course_id(
+        self, course_id: str, *, scenario: str | None = None, as_of: str | None = None,
+    ) -> list[dict]:
         """按 course_id 取出全部 chunk（供 BM25 建索引）。禁止无 filter。"""
         if not course_id:
             raise ValueError("get_by_course_id 必须提供 course_id")
+        return self._read_hits(
+            self._evidence_where(course_id, scenario=scenario, as_of=as_of)
+        )
+
+    def _read_hits(self, where: dict, *, limit: int | None = None) -> list[dict]:
+        """共用读取与规范化；保持存储顺序，省略 limit 时读取完整语料。"""
         if self._collection.count() == 0:
             return []
         try:
             results = self._collection.get(
-                where={"$and": [{"course_id": course_id}, {"is_active": True}]},
+                where=where,
                 include=["documents", "metadatas"],
+                **({"limit": limit} if limit is not None else {}),
             )
         except Exception as e:
-            logger.error("按 course_id 读取向量失败: %s", e)
+            logger.error("按条件读取向量失败: %s", e)
             raise ServiceUnavailableException(
                 "向量读取失败", detail=str(e)
             ) from e
@@ -522,16 +474,14 @@ class ChromaVectorStore:
         ids = results.get("ids") or []
         documents = results.get("documents") or []
         metadatas = results.get("metadatas") or []
-        hits: list[dict] = []
-        for i, chunk_id in enumerate(ids):
-            meta = (metadatas[i] if i < len(metadatas) else None) or {}
-            hits.append(
-                self._normalize_hit(
-                    chunk_id,
-                    documents[i] if i < len(documents) else "",
-                    meta,
-                )
+        hits = [
+            self._normalize_hit(
+                ids[i],
+                documents[i] if i < len(documents) else "",
+                (metadatas[i] if i < len(metadatas) else None) or {},
             )
+            for i in range(len(ids))
+        ]
         return hits
 
     def list_chapters(self, course_id: str) -> list[str]:
@@ -594,22 +544,7 @@ class ChromaVectorStore:
         key = (chapter or "").strip()
         if not key:
             return []
-        corpus = self.get_by_course_id(course_id)
-        if scenario and scenario != "all":
-            corpus = [
-                hit
-                for hit in corpus
-                if (hit.get("metadata") or {}).get("applicability_scope")
-                in ("all", scenario)
-            ]
-        if as_of:
-            corpus = [
-                hit
-                for hit in corpus
-                if str((hit.get("metadata") or {}).get("effective_from") or "0001-01-01")
-                <= as_of
-                <= str((hit.get("metadata") or {}).get("effective_to") or "9999-12-31")
-            ]
+        corpus = self.get_by_course_id(course_id, scenario=scenario, as_of=as_of)
         exact = [
             h
             for h in corpus

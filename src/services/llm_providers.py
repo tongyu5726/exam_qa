@@ -5,17 +5,15 @@ from __future__ import annotations
 import json
 import logging
 import re
-from pathlib import Path
 from typing import Any
 
-from src.exceptions import BadRequestException, NotFoundException
+from src.exceptions import AppException, BadRequestException, NotFoundException
 from src.services.env_store import PROJECT_ROOT, write_env_updates
 
 logger = logging.getLogger(__name__)
 
 STORE_PATH = PROJECT_ROOT / "data" / "llm_providers.json"
 # openai-compatible 写入时归一为 openai；对外只暴露规范值
-FORMATS = frozenset({"openai", "openai-compatible", "local"})
 CANONICAL_FORMATS = ("openai", "local")
 _NAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 
@@ -233,3 +231,36 @@ def sync_active_fields_from_patch(
         out.append(p)
     if changed:
         save_providers(out)
+
+
+def persist_config_updates(updates: dict[str, str], llm_patch: dict | None) -> None:
+    """完成校验后的配置保存；普通写入异常时恢复两份文件的原内容。"""
+    if llm_patch is None:
+        write_env_updates(updates)
+        return
+    from src.services.env_store import ENV_PATH, MASKED_SECRET
+
+    snapshots = {path: path.read_bytes() if path.exists() else None
+                 for path in (ENV_PATH, STORE_PATH)}
+    try:
+        write_env_updates(updates)
+        sync_active_fields_from_patch(
+            model=llm_patch.get("model"), base_url=llm_patch.get("base_url"),
+            api_key=llm_patch.get("api_key") if llm_patch.get("api_key") != MASKED_SECRET else None,
+        )
+    except Exception as exc:
+        try:
+            for path, content in snapshots.items():
+                if content is None:
+                    path.unlink(missing_ok=True)
+                elif not path.exists() or path.read_bytes() != content:
+                    path.write_bytes(content)
+            from src.config import reload_config
+
+            reload_config()
+        except Exception as rollback_error:
+            logger.error("配置保存后恢复失败", exc_info=True)
+            raise AppException("配置保存及恢复失败，请检查文件权限与磁盘空间") from rollback_error
+        if isinstance(exc, AppException):
+            raise
+        raise AppException("配置保存失败，已恢复原配置") from exc

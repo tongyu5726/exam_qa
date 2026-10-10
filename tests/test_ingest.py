@@ -8,10 +8,10 @@ from src.services.ingestion import (
     _chunk_structured,
     _fail_ingest,
     _needs_reindex,
-    _split_text,
     assign_chapters,
     scan_knowledge_dir,
 )
+from src.services.ingestion_parts.text_chunks import _split_text
 from src.services.parsing import ParsedBlock, ParsedDocument
 from src.services.storage.catalog_store import DEFAULT_COURSE_ID, DEFAULT_COURSE_NAME
 
@@ -358,3 +358,35 @@ class TestVectorStoreGuard:
         vector_store.upsert([_vec_chunk(42, "chunk a")], [[0.1] * 8])
         vector_store.delete_by_doc_id("42")
         assert vector_store.search([0.1] * 8, top_k=5, course_id=_CID) == []
+
+
+@pytest.mark.parametrize('structured', [False, True])
+def test_ingest_keeps_chunk_order_embedding_and_provenance(
+    structured, tmp_path, doc_store, vector_store, monkeypatch,
+):
+    from src.services.ingestion import ingest_file
+    from src.services.parsing import ParsedPage
+
+    path = tmp_path / 'source.md'
+    path.write_text('source', encoding='utf-8')
+    parsed = ParsedDocument(
+        pages=[ParsedPage(1, '第一段正文。'), ParsedPage(2, '第二段正文。')],
+        blocks=[ParsedBlock('text', '第一段正文。', 1), ParsedBlock('table', 'A | B', 2)] if structured else [],
+        parser_name='contract-parser', parse_quality=.91,
+    )
+    embedded = []
+
+    def embed(texts):
+        embedded.extend(texts)
+        return [[.1, .2, .3] for text in texts]
+
+    monkeypatch.setattr('src.services.ingestion.embed_texts', embed)
+    doc_id = ingest_file(str(path), vector_store, doc_store, course_id=_CID, parsed_document=parsed)
+    hits = vector_store.get_chunks(course_id=_CID, doc_id=doc_id)
+    assert [h['text'] for h in hits] == embedded
+    assert [h['metadata']['chunk_index'] for h in hits] == list(range(len(hits)))
+    assert [h['metadata']['page'] for h in hits] == [1, 2]
+    assert all(h['metadata']['parser_name'] == 'contract-parser' for h in hits)
+    assert all(h['metadata']['parse_quality'] == .91 for h in hits)
+    assert hits[-1]['metadata']['block_type'] == ('table' if structured else 'text')
+    assert doc_store.get(int(doc_id))['chunk_count'] == len(hits)

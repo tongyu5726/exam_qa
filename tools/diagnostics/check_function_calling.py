@@ -3,7 +3,7 @@
 
 仅显式运行时调用外部 API，可能产生服务商费用。
 用法（在项目根目录）：
-    uv run --no-sync python check_function_calling.py
+    uv run --no-sync python -m tools.diagnostics.check_function_calling
 """
 import logging
 
@@ -15,7 +15,7 @@ def main() -> int:
     from dotenv import load_dotenv
     from pathlib import Path
 
-    load_dotenv(Path(__file__).resolve().with_name(".env"))
+    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
     if not os.getenv("LLM_API_KEY"):
         logger.error("请先配置 LLM_API_KEY，再运行此手动探测脚本。")
         return 2
@@ -48,8 +48,6 @@ def main() -> int:
     ]
 
     logger.info("模型: %s", model)
-
-
 
     resp = client.chat.completions.create(
         model=model,

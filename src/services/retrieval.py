@@ -1,8 +1,9 @@
-﻿"""检索：向量 + BM25（按 course_id）→ RRF → 阈值过滤。"""
+"""检索：向量 + BM25（按 course_id）→ RRF → 阈值过滤。"""
 
 from __future__ import annotations
 
 import logging
+from bisect import bisect_left, bisect_right
 import math
 import re
 from collections import Counter
@@ -44,7 +45,52 @@ _CHINESE_LIST_ITEM = re.compile(
     r"([一二三四五六七八九十两]{1,3})\s*[、.])"
 )
 
-from src.services.tokenizer import tokenize  # noqa: E402
+from src.services.tokenizer import ChineseTokenizer, tokenize  # noqa: E402
+
+
+def _search_query(question: str) -> str:
+    """去除请求包装，保留主题、否定、比较、数值和条件等查询语义。"""
+    query = re.sub(
+        r"^(?:你好[，,\s]*)?(?:(?:请问|麻烦你?|请你?|帮我|给我)\s*)+", "", question.strip(),
+    )
+    request = re.match(r"^(?:详细|简单|简要)?(?P<verb>介绍|讲解|解释|说明)(?:一下)?\s*", query)
+    if request:
+        words = ChineseTokenizer().cut(query[request.start("verb"):])
+        # “解释器”“说明书”等完整术语不能当作请求动词删掉。
+        if (words and words[0] in {request["verb"], request["verb"] + "一下"}) or request[0].rstrip().endswith("一下"):
+            query = query[request.end():]
+    query = query.strip() or question.strip()
+    return _definition_topic(query) or query
+
+
+def _definition_topic(query: str) -> str | None:
+    query = query.strip(" \t\n？?。")
+    match = re.fullmatch(r"(?:什么是|何为)(.+)|(.+?)(?:是什么|的定义(?:是什么)?|的概念)", query)
+    if match:
+        return (match[1] or match[2]).strip(" ‘'\"“”「」")
+    if 2 <= len(query) <= 30 and not re.search(r"[，,。！？?]|如何|为什么|区别|哪些|与|和|的|关系|公式", query):
+        return query
+    return None
+
+
+def _definition_first(hits: list[dict], topic: str | None) -> list[dict]:
+    if not topic:
+        return hits
+    pattern = re.compile(re.escape(topic) + r"\s*(?:是|指|定义为|定义[:：])")
+    return sorted(hits, key=lambda hit: bool(pattern.search(re.sub(r"[*`]+", "", hit.get("text") or ""))), reverse=True)
+
+
+def _distinct_passages(hits: list[dict]) -> list[dict]:
+    """重复导入的同文片段不应占满名额；保留排序与证据分数。"""
+    seen: set[str] = set()
+    result = []
+    for hit in hits:
+        text = re.sub(r"\s+", " ", hit.get("text") or "").strip()
+        key = text or str(hit["id"])
+        if key not in seen:
+            seen.add(key)
+            result.append(hit)
+    return result
 
 
 @lru_cache(maxsize=256)
@@ -111,6 +157,10 @@ def rrf_fuse(*ranked_lists: list[dict], k: int = RRF_K, top_k: int) -> list[dict
     ]
 
 
+def _evidence_kwargs(scenario: str | None, as_of: str | None) -> dict:
+    return {key: value for key, value in (("scenario", scenario), ("as_of", as_of)) if value}
+
+
 def _vector_search(
     query: str,
     vs: ChromaVectorStore,
@@ -122,15 +172,16 @@ def _vector_search(
 ) -> list[dict]:
     try:
         query_vec = list(_cached_query_vec(_embed_cache_key(), query))
+        supported = getattr(get_embedding_client(), "supports_query", None)
+        if callable(supported) and supported(query) is False:
+            logger.warning("Embedding 无法编码当前查询词，使用当前课程关键词召回: model=%s", config.embedding.model)
+            return []
     except Exception as e:
         logger.error("检索向量化失败: %s", e)
         raise ServiceUnavailableException("向量化服务不可用", detail=str(e)) from e
     # 保持无证据约束时的调用形态，兼容现有工具实现；有约束才传给向量库。
     kwargs: dict[str, object] = {"top_k": top_k, "course_id": course_id}
-    if scenario:
-        kwargs["scenario"] = scenario
-    if as_of:
-        kwargs["as_of"] = as_of
+    kwargs.update(_evidence_kwargs(scenario, as_of))
     return vs.search(query_vec, **kwargs)
 
 
@@ -163,10 +214,7 @@ def retrieve_visual_evidence(
                 "course_id": course_id,
                 "block_type": block_type,
             }
-            if scenario:
-                kwargs["scenario"] = scenario
-            if as_of:
-                kwargs["as_of"] = as_of
+            kwargs.update(_evidence_kwargs(scenario, as_of))
             for hit in vs.search(query_vec, **kwargs):
                 chunk_id = str(hit.get("id") or "")
                 if chunk_id and chunk_id not in seen_ids:
@@ -347,6 +395,8 @@ def _expand_list_evidence(
     as_of: str | None = None,
 ) -> list[dict]:
     """命中列表标题/编号项后，补齐附近的连续编号块。"""
+    # 缓存仅属于本次扩展，不跨请求保留课程资料。
+    item_numbers = lru_cache(maxsize=None)(_list_item_numbers)
     by_doc: dict[str, list[dict]] = {}
     for hit in anchors:
         meta = hit.get("metadata") or {}
@@ -359,10 +409,7 @@ def _expand_list_evidence(
     seen_ids = {str(hit.get("id") or "") for hit in anchors}
     for doc_id, doc_anchors in by_doc.items():
         kwargs: dict[str, object] = {"course_id": course_id, "doc_id": doc_id, "limit": 2000}
-        if scenario:
-            kwargs["scenario"] = scenario
-        if as_of:
-            kwargs["as_of"] = as_of
+        kwargs.update(_evidence_kwargs(scenario, as_of))
         try:
             rows = vs.get_chunks(**kwargs)
         except Exception as exc:
@@ -377,16 +424,14 @@ def _expand_list_evidence(
         ]
         rows.sort(key=lambda row: int((row.get("metadata") or {}).get("chunk_index") or 0))
 
+        indices = [int((row.get("metadata") or {})["chunk_index"]) for row in rows]
         for anchor in sorted(doc_anchors, key=lambda hit: float(hit.get("score") or 0.0), reverse=True):
             anchor_meta = anchor.get("metadata") or {}
             anchor_index = int(anchor_meta.get("chunk_index") or 0)
             anchor_page = anchor_meta.get("page")
             window: list[dict] = []
-            for row in rows:
+            for row in rows[bisect_left(indices, anchor_index - 2):bisect_right(indices, anchor_index + 12)]:
                 meta = row.get("metadata") or {}
-                chunk_index = int(meta.get("chunk_index") or 0)
-                if not (anchor_index - 2 <= chunk_index <= anchor_index + 12):
-                    continue
                 page = meta.get("page")
                 if (
                     isinstance(anchor_page, int)
@@ -400,13 +445,13 @@ def _expand_list_evidence(
 
             local_text = "\n".join(str(row.get("text") or "") for row in window)
             expected = _expected_list_count(f"{query}\n{local_text}")
-            item_rows = [row for row in window if _list_item_numbers(str(row.get("text") or ""))]
+            item_rows = [row for row in window if item_numbers(str(row.get("text") or ""))]
             all_numbers = (
-                set().union(*(_list_item_numbers(str(row.get("text") or "")) for row in item_rows))
+                set().union(*(item_numbers(str(row.get("text") or "")) for row in item_rows))
                 if item_rows
                 else set()
             )
-            anchor_numbers = _list_item_numbers(str(anchor.get("text") or ""))
+            anchor_numbers = item_numbers(str(anchor.get("text") or ""))
             has_cue = bool(_LIST_CONTEXT_CUE.search(local_text))
             if not item_rows or 1 not in all_numbers:
                 continue
@@ -424,14 +469,14 @@ def _expand_list_evidence(
                 if abs(int((hit.get("metadata") or {}).get("chunk_index") or 0) - anchor_index) <= 12
             ]
             coverage = (
-                set().union(*(_list_item_numbers(str(hit.get("text") or "")) for hit in nearby_anchors))
+                set().union(*(item_numbers(str(hit.get("text") or "")) for hit in nearby_anchors))
                 if nearby_anchors
                 else set()
             )
             anchor_score = max(float(hit.get("score") or 0.0) for hit in doc_anchors)
             expansion_limit = min(12, max(top_k * 2, expected or 0, 4))
             for row in item_rows:
-                numbers = _list_item_numbers(str(row.get("text") or ""))
+                numbers = item_numbers(str(row.get("text") or ""))
                 if not ((numbers & target) - coverage):
                     continue
                 coverage.update(numbers)
@@ -486,10 +531,7 @@ def _expand_formula_evidence(
             "block_type": "formula",
             "limit": 500,
         }
-        if scenario:
-            kwargs["scenario"] = scenario
-        if as_of:
-            kwargs["as_of"] = as_of
+        kwargs.update(_evidence_kwargs(scenario, as_of))
         try:
             formulas = vs.get_chunks(**kwargs)
         except Exception as exc:
@@ -566,13 +608,15 @@ def retrieve(
         fuse_k = pool
     else:
         pool = top_k * 2
-        fuse_k = top_k
+        # 完整候选池先过阈值、去重，再截断，避免相关证据被噪声挤掉。
+        fuse_k = pool * 2
 
+    search_query = _search_query(q)
     vec_hits = _vector_search(
-        q, vs, course_id, pool, scenario=scenario, as_of=as_of
+        search_query, vs, course_id, pool, scenario=scenario, as_of=as_of
     )
     bm25_hits = _bm25_search(
-        q, vs, course_id, pool, scenario=scenario, as_of=as_of
+        search_query, vs, course_id, pool, scenario=scenario, as_of=as_of
     )
     fused = (
         rrf_fuse(vec_hits, bm25_hits, top_k=fuse_k) if (vec_hits or bm25_hits) else []
@@ -591,6 +635,11 @@ def retrieve(
         kept = [h for h in ranked if h.get("score", 0) >= score_threshold]
     else:
         kept = [h for h in fused if h.get("score", 0) >= score_threshold]
+        if scenario or as_of:
+            # 同文保留更适用版本；去重不能覆盖权威/时效规则。
+            kept = _select_evidence(kept)
+        kept = _definition_first(kept, _definition_topic(search_query))
+        kept = _distinct_passages(kept)[:top_k]
 
     formula_query = _is_formula_query(q)
     list_query = _is_list_query(q)

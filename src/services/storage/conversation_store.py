@@ -1,4 +1,4 @@
-﻿"""对话持久化存储（SQLite），按 course_id 隔离。
+"""对话持久化存储（SQLite），按 course_id 隔离。
 
 表结构：
   conversations: id, course_id, title, created_at, updated_at
@@ -49,6 +49,10 @@ class ConversationStore:
                     title TEXT NOT NULL DEFAULT '新对话',
                     created_at TEXT NOT NULL DEFAULT (datetime('now','localtime')),
                     updated_at TEXT NOT NULL DEFAULT (datetime('now','localtime'))
+                );
+                CREATE TABLE IF NOT EXISTS agent_tasks (
+                    conversation_id TEXT PRIMARY KEY, course_id TEXT NOT NULL, task_json TEXT NOT NULL,
+                    FOREIGN KEY(conversation_id) REFERENCES conversations(id) ON DELETE CASCADE
                 );
                 CREATE TABLE IF NOT EXISTS messages (
                     id TEXT PRIMARY KEY,
@@ -104,13 +108,6 @@ class ConversationStore:
             cur = conn.execute("DELETE FROM conversations WHERE id=?", (conv_id,))
             return cur.rowcount > 0
 
-    def touch_conversation(self, conv_id: str) -> None:
-        with self._conn() as conn:
-            conn.execute(
-                "UPDATE conversations SET updated_at=? WHERE id=?",
-                (_now(), conv_id),
-            )
-
     # ── messages ───────────────────────────────────────────────────
 
     def append_message(
@@ -141,30 +138,70 @@ class ConversationStore:
     def get_history(
         self, conversation_id: str, max_messages: int = MAX_HISTORY_MESSAGES
     ) -> list[dict]:
+        if max_messages <= 0:
+            return []
+        return [{"role": r["role"], "content": r["content"]} for r in self.get_messages(conversation_id, max_messages)]
+
+    def get_agent_task(self, conversation_id: str, course_id: str) -> dict | None:
+        with self._conn() as conn:
+            row = conn.execute("SELECT task_json FROM agent_tasks WHERE conversation_id=? AND course_id=?",
+                               (conversation_id, course_id)).fetchone()
+        return json.loads(row[0]) if row else None
+
+    def get_messages(self, conversation_id: str, limit: int = 200) -> list[dict]:
+        """Read published history in insertion order, including same-millisecond turns."""
         with self._conn() as conn:
             rows = conn.execute(
-                "SELECT role, content FROM messages WHERE conversation_id=? "
-                "ORDER BY created_at ASC, id ASC LIMIT -1 OFFSET "
-                "(SELECT MAX(0, COUNT(*)-?) FROM messages WHERE conversation_id=?)",
-                (conversation_id, max_messages, conversation_id),
+                "SELECT * FROM (SELECT rowid AS sequence, * FROM messages WHERE conversation_id=? "
+                "ORDER BY rowid DESC LIMIT ?) ORDER BY sequence", (conversation_id, max(1, min(limit, 500))),
             ).fetchall()
-        return [{"role": r["role"], "content": r["content"]} for r in rows]
+        return [{"id": r["id"], "role": r["role"], "content": r["content"],
+                 "citations": json.loads(r["citations"]), "intent": json.loads(r["intent"]),
+                 "grounded": bool(r["grounded"]), "mode": r["mode"], "created_at": r["created_at"]} for r in rows]
+
+    def save_agent_task(self, conversation_id: str, course_id: str, task: dict) -> None:
+        conversation = self.get_conversation(conversation_id)
+        if conversation and conversation["course_id"] != course_id:
+            from src.exceptions import BadRequestException
+            raise BadRequestException("对话不属于当前课程")
+        self.ensure_conversation(conversation_id, course_id, task["goal"][:40])
+        with self._conn() as conn:
+            conn.execute("INSERT INTO agent_tasks VALUES(?,?,?) ON CONFLICT(conversation_id) "
+                         "DO UPDATE SET task_json=excluded.task_json WHERE agent_tasks.course_id=excluded.course_id",
+                         (conversation_id, course_id, json.dumps(task, ensure_ascii=False)))
+
+    def checkpoint_agent_task(self, conversation_id: str, course_id: str, task: dict) -> dict:
+        """原子检查取消/替换状态，防止旧运行覆盖当前任务。"""
+        with self._conn() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute("SELECT task_json FROM agent_tasks WHERE conversation_id=? AND course_id=?",
+                               (conversation_id, course_id)).fetchone()
+            latest = json.loads(row[0]) if row else None
+            if not latest or latest["id"] != task["id"]:
+                return {**task, "status": "cancelled"}
+            if latest["status"] == "cancelled":
+                return latest
+            conn.execute("UPDATE agent_tasks SET task_json=? WHERE conversation_id=? AND course_id=?",
+                         (json.dumps(task, ensure_ascii=False), conversation_id, course_id))
+        return task
 
     def get_latest_user_intent(self, conversation_id: str) -> dict | None:
         """读取最近一轮用户确认的路由状态，供指代性追问继承。"""
         with self._conn() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 "SELECT intent FROM messages WHERE conversation_id=? AND role='user' "
-                "ORDER BY created_at DESC, id DESC LIMIT 1",
-                (conversation_id,),
-            ).fetchone()
-        if not row:
-            return None
-        try:
-            data = json.loads(row["intent"] or "{}")
-        except json.JSONDecodeError:
-            return None
-        return data if isinstance(data, dict) and data else None
+                "ORDER BY rowid DESC", (conversation_id,),
+            )
+            for row in rows:
+                try:
+                    data = json.loads(row["intent"] or "{}")
+                except json.JSONDecodeError:
+                    return None
+                if isinstance(data, dict) and data.get("task") == "conversation":
+                    continue
+                return data if isinstance(data, dict) and data else None
+        return None
+
     def count_messages(self, conversation_id: str) -> int:
         with self._conn() as conn:
             row = conn.execute(
@@ -185,10 +222,6 @@ class ConversationStore:
                 "INSERT OR IGNORE INTO conversations(id,course_id,title,created_at,updated_at) VALUES(?,?,?,?,?)",
                 (conv_id, course_id, title, now, now),
             )
-
-
-    def close(self) -> None:
-        pass
 
 
 def _now() -> str:

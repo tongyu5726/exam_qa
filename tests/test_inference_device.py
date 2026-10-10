@@ -88,9 +88,10 @@ def test_embedding_and_reranker_receive_configured_device(monkeypatch):
         SentenceTransformer=sentence_factory, CrossEncoder=cross_factory,
     ))
     monkeypatch.setattr("src.services.http_client.reset_hf_http_session", lambda: None)
+    monkeypatch.setattr(embedding, "_cached_model_path", lambda model: model)
     client = embedding.create_embedding_client(EmbeddingConfig(device="cpu"), LLMConfig())
     client.warmup()
-    sentence_factory.assert_called_once_with(client.model, device="cpu")
+    sentence_factory.assert_called_once_with(client.model, device="cpu", local_files_only=True)
     monkeypatch.setattr(rerank.config.retrieval, "rerank_device", "cuda:0")
     rerank.clear_reranker()
     try:

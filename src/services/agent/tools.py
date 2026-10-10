@@ -9,14 +9,28 @@ from __future__ import annotations
 
 import logging
 
+from src.config import config
 from src.exceptions import BadRequestException
+from src.services.citations import build_citation
 from src.services.storage.vector_store import ChromaVectorStore
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_TOOLS = frozenset(
-    {"search_pdf", "read_page", "extract_table", "analyze_chart", "quote_source"}
-)
+
+def rag_answer(query: str, *, vs, course_id: str, llm, mode="qa", history=None,
+               scenario=None, as_of=None, top_k=None, score_threshold=None) -> dict:
+    """完整 RAG 能力；模式、会话与资料范围由 Agent 运行时强制传入。"""
+    from src.services.rag import answer
+    return answer(query, mode, vs, llm, course_id, history=history,
+                  scenario=scenario, as_of=as_of, top_k=top_k, score_threshold=score_threshold)
+
+
+def rag_answer_stream(query: str, *, vs, course_id: str, llm, mode="qa", history=None,
+                      scenario=None, as_of=None, top_k=None, score_threshold=None):
+    """同一 RAG 工具的流式适配，用于不支持工具决策的模型。"""
+    from src.services.rag import answer_stream
+    yield from answer_stream(query, mode, vs, llm, course_id, history=history,
+                             scenario=scenario, as_of=as_of, top_k=top_k, score_threshold=score_threshold)
 
 
 def retrieve_tool(
@@ -42,27 +56,9 @@ def retrieve_tool(
     return retrieve(**kwargs)
 
 
-def _citation(hit: dict) -> dict:
-    """把检索命中转成结构化引用来源（文件/页码/章节/切片路径）。"""
-    meta = hit.get("metadata") or {}
-    citation = {
-        "source_file": meta.get("source_file") or "",
-        "page": meta.get("page"),
-        "chapter": meta.get("chapter") or "",
-        "section_path": meta.get("section_path") or "",
-        "block_type": meta.get("block_type") or "",
-        "bbox": meta.get("bbox") or "",
-        "pdf_page_label": meta.get("pdf_page_label") or "",
-        "textbook_references": meta.get("textbook_references") or "",
-        "content_role": meta.get("content_role") or "content",
-        "parser_name": meta.get("parser_name") or "",
-        "parse_quality": float(meta.get("parse_quality") or 0.0),
-        "snippet": (hit.get("text") or "")[:200],
-        "score": round(float(hit.get("score") or 0.0), 4),
-    }
-    # 让 Agent 能将检索命中继续交给 read_page 精读；对外 Citation 模型会忽略此内部辅助字段。
-    if meta.get("doc_id"):
-        citation["doc_id"] = str(meta["doc_id"])
+def _citation(hit: dict, *, scenario: str | None = None, as_of: str | None = None) -> dict:
+    citation = build_citation(hit, scenario=scenario, as_of=as_of, single_line=False)
+    citation["source_file"] = (hit.get("metadata") or {}).get("source_file") or ""
     return citation
 
 
@@ -87,14 +83,15 @@ def search_pdf(
         kwargs["scenario"] = scenario
     if as_of:
         kwargs["as_of"] = as_of
-    hits = retrieve_tool(query, vs, course_id, top_k, **kwargs)
+    hits = [h for h in retrieve_tool(query, vs, course_id, top_k, **kwargs)
+            if float(h.get("score", 0)) >= config.retrieval.score_threshold]
     return {
         "query": query,
         "results": [
             {"text": h.get("text", ""), "metadata": h.get("metadata") or {}}
             for h in hits
         ],
-        "citations": [_citation(h) for h in hits],
+        "citations": [_citation(h, scenario=scenario, as_of=as_of) for h in hits],
     }
 
 
@@ -134,7 +131,7 @@ def read_page(
         "page": page,
         "found": True,
         "text": text,
-        "citations": [_citation(h) for h in hits],
+        "citations": [_citation(h, scenario=scenario, as_of=as_of) for h in hits],
     }
 
 
@@ -162,7 +159,8 @@ def extract_table(
             kwargs["scenario"] = scenario
         if as_of:
             kwargs["as_of"] = as_of
-        hits = vs.search(_embed_query(query), **kwargs)
+        hits = [h for h in vs.search(_embed_query(query), **kwargs)
+                if float(h.get("score", 0)) >= config.retrieval.score_threshold]
     else:
         kwargs = {
             "course_id": course_id,
@@ -191,7 +189,7 @@ def extract_table(
         "query": query or "",
         "count": len(tables),
         "tables": tables,
-        "citations": [_citation(h) for h in hits],
+        "citations": [_citation(h, scenario=scenario, as_of=as_of) for h in hits],
     }
 
 
@@ -214,18 +212,9 @@ def analyze_chart(
     """
     hits: list[dict] = []
     if query:
-        vec = _embed_query(query)
-        for btype in ("image_summary", "image"):
-            kwargs: dict[str, object] = {
-                "top_k": top_k, "course_id": course_id, "block_type": btype,
-            }
-            if scenario:
-                kwargs["scenario"] = scenario
-            if as_of:
-                kwargs["as_of"] = as_of
-            hits.extend(vs.search(vec, **kwargs))
-        hits.sort(key=lambda h: float(h.get("score") or 0.0), reverse=True)
-        hits = hits[:top_k]
+        from src.services.retrieval import retrieve_visual_evidence
+
+        hits = retrieve_visual_evidence(query, vs, course_id, top_k=top_k, scenario=scenario, as_of=as_of)
     else:
         for btype in ("image_summary", "image"):
             kwargs = {"course_id": course_id, "doc_id": doc_id, "page": page, "block_type": btype}
@@ -246,9 +235,9 @@ def analyze_chart(
         deduped.append(h)
     hits = deduped
     if hits:
-        from src.services.query import _verify_visual_evidence
+        from src.services.visual_evidence import verify_visual_evidence
 
-        hits = _verify_visual_evidence(query, hits)
+        hits = verify_visual_evidence(query, hits)
     summaries = [h.get("text", "").strip() for h in hits if h.get("text", "").strip()]
     if not summaries:
         return {
@@ -262,7 +251,7 @@ def analyze_chart(
             "found": True,
             "analysis": "",
             "summaries": summaries,
-            "citations": [_citation(h) for h in hits],
+            "citations": [_citation(h, scenario=scenario, as_of=as_of) for h in hits],
         }
     prompt = (
         "以下是课程资料中图片/图表的检索摘要，请结合用户问题给出分析结论。\n\n"
@@ -274,7 +263,7 @@ def analyze_chart(
         "found": True,
         "analysis": answer,
         "summaries": summaries,
-        "citations": [_citation(h) for h in hits],
+        "citations": [_citation(h, scenario=scenario, as_of=as_of) for h in hits],
     }
 
 
@@ -288,101 +277,79 @@ def quote_source(
     as_of: str | None = None,
 ) -> dict:
     """quote_source：返回检索结果的引用来源（文件/页码/章节/切片路径）。"""
-    kwargs: dict[str, object] = {}
-    if scenario:
-        kwargs["scenario"] = scenario
-    if as_of:
-        kwargs["as_of"] = as_of
-    hits = retrieve_tool(query, vs, course_id, top_k, **kwargs)
-    return {
-        "query": query,
-        "count": len(hits),
-        "citations": [_citation(h) for h in hits],
-    }
+    result = search_pdf(query, vs, course_id, top_k, scenario=scenario, as_of=as_of)
+    return {"query": query, "count": len(result["citations"]), "citations": result["citations"]}
 
 
 # OpenAI 兼容 function calling schema（P2-C 决策环使用；course_id 由系统强制注入，不暴露给模型）
+def _tool_schema(name: str, description: str, properties: dict, required: list[str] | None = None) -> dict:
+    parameters = {"type": "object", "properties": properties}
+    if required is not None:
+        parameters["required"] = required
+    return {
+        "type": "function",
+        "function": {"name": name, "description": description, "parameters": parameters},
+    }
+
+
 TOOL_SCHEMAS: list[dict] = [
-    {
-        "type": "function",
-        "function": {
-            "name": "search_pdf",
-            "description": "检索课程资料中与问题相关的片段（向量 + BM25 混合检索），返回片段文本与引用来源。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "检索查询句"},
-                    "top_k": {"type": "integer", "description": "返回片段数，默认 5"},
-                },
-                "required": ["query"],
-            },
+    _tool_schema(
+        "rag_answer", "根据课程资料检索并生成有引用的答案，支持问答、知识点聚合和章节概览；资料不足时拒答。优先使用此工具。",
+        {"query": {"type": "string", "description": "需要据源回答的问题或章节名"}},
+        required=["query"],
+    ),
+    _tool_schema(
+        "search_pdf",
+        "检索课程资料中与问题相关的片段（向量 + BM25 混合检索），返回片段文本与引用来源。",
+        {
+            "query": {"type": "string", "description": "检索查询句"},
+            "top_k": {"type": "integer", "description": "返回片段数，默认 5"},
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "read_page",
-            "description": "读取指定文档指定页的完整文本（含表格与图片摘要切片）。doc_id 与 source_file 至少给一个。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "doc_id": {"type": "string", "description": "文档 ID（如检索结果 citation 中的 doc_id）"},
-                    "page": {"type": "integer", "description": "页码，从 1 开始"},
-                    "source_file": {"type": "string", "description": "源文件名（可选，替代 doc_id）"},
-                },
-                "required": ["page"],
-            },
+        required=["query"],
+    ),
+    _tool_schema(
+        "read_page",
+        "读取指定文档指定页的完整文本（含表格与图片摘要切片）。doc_id 与 source_file 至少给一个。",
+        {
+            "doc_id": {"type": "string", "description": "文档 ID（如检索结果 citation 中的 doc_id）"},
+            "page": {"type": "integer", "description": "页码，从 1 开始"},
+            "source_file": {"type": "string", "description": "源文件名（可选，替代 doc_id）"},
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "extract_table",
-            "description": "抽取资料中的表格。给定 query 按语义检索表格；否则按文档/页码过滤取表，返回表格文本、列头与引用来源。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "表格相关的检索问题（可选）"},
-                    "doc_id": {"type": "string", "description": "文档 ID（可选）"},
-                    "source_file": {"type": "string", "description": "源文件名（可选）"},
-                    "page": {"type": "integer", "description": "页码（可选）"},
-                    "top_k": {"type": "integer", "description": "最多返回表格数，默认 10"},
-                },
-            },
+        required=["page"],
+    ),
+    _tool_schema(
+        "extract_table",
+        "抽取资料中的表格。给定 query 按语义检索表格；否则按文档/页码过滤取表，返回表格文本、列头与引用来源。",
+        {
+            "query": {"type": "string", "description": "表格相关的检索问题（可选）"},
+            "doc_id": {"type": "string", "description": "文档 ID（可选）"},
+            "source_file": {"type": "string", "description": "源文件名（可选）"},
+            "page": {"type": "integer", "description": "页码（可选）"},
+            "top_k": {"type": "integer", "description": "最多返回表格数，默认 10"},
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "analyze_chart",
-            "description": "分析资料中的图片/图表；优先使用入库摘要，必要时调用 VLM 复核原图。未配置视觉模型或无摘要时返回提示，不编造内容。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "用户问题（可选；不传则返回全部图表摘要）"},
-                    "doc_id": {"type": "string", "description": "文档 ID（可选）"},
-                    "page": {"type": "integer", "description": "页码（可选）"},
-                    "top_k": {"type": "integer", "description": "最多取多少图表摘要，默认 10"},
-                },
-            },
+    ),
+    _tool_schema(
+        "analyze_chart",
+        "分析资料中的图片/图表；优先使用入库摘要，必要时调用 VLM 复核原图。未配置视觉模型或无摘要时返回提示，不编造内容。",
+        {
+            "query": {"type": "string", "description": "用户问题（可选；不传则返回全部图表摘要）"},
+            "doc_id": {"type": "string", "description": "文档 ID（可选）"},
+            "page": {"type": "integer", "description": "页码（可选）"},
+            "top_k": {"type": "integer", "description": "最多取多少图表摘要，默认 10"},
         },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "quote_source",
-            "description": "返回检索结果的引用来源列表（文件、页码、章节、切片路径），用于追溯引用。",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "检索查询句"},
-                    "top_k": {"type": "integer", "description": "最多返回引用数，默认 5"},
-                },
-                "required": ["query"],
-            },
+    ),
+    _tool_schema(
+        "quote_source",
+        "返回检索结果的引用来源列表（文件、页码、章节、切片路径），用于追溯引用。",
+        {
+            "query": {"type": "string", "description": "检索查询句"},
+            "top_k": {"type": "integer", "description": "最多返回引用数，默认 5"},
         },
-    },
+        required=["query"],
+    ),
 ]
+
+SUPPORTED_TOOLS = frozenset(schema["function"]["name"] for schema in TOOL_SCHEMAS)
 
 
 def execute_tool(
@@ -392,6 +359,9 @@ def execute_tool(
     vs: ChromaVectorStore,
     course_id: str,
     llm=None,
+    score_threshold: float | None = None,
+    mode: str = "qa",
+    history: list[dict] | None = None,
     top_k: int = 5,
     scenario: str | None = None,
     as_of: str | None = None,
@@ -401,6 +371,10 @@ def execute_tool(
         raise BadRequestException(
             f"未知工具: {name}，可用工具: {', '.join(sorted(SUPPORTED_TOOLS))}"
         )
+    if name == "rag_answer":
+        return rag_answer(args.get("query", ""), vs=vs, course_id=course_id, llm=llm,
+                          mode=mode, history=history, scenario=scenario, as_of=as_of,
+                          top_k=top_k, score_threshold=score_threshold)
     if name == "search_pdf":
         return search_pdf(args.get("query", ""), vs, course_id, int(args.get("top_k") or top_k), scenario=scenario, as_of=as_of)
     if name == "read_page":

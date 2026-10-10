@@ -11,17 +11,6 @@ from src.services.ingestion_parts.text_chunks import _split_text
 logger = logging.getLogger(__name__)
 
 
-_TEXT_LIKE_BLOCKS = frozenset(
-    {
-        "text",
-        "caption",
-        "image_caption",
-        "table_caption",
-        "figure_caption",
-    }
-)
-
-
 _FORMULA_BLOCKS = frozenset({"formula", "formula_inline"})
 
 
@@ -173,8 +162,6 @@ def _chunk_structured(
         return {
             "parts": [],
             "page": page,
-            "block_type": "text",
-            "table_headers": "",
             "section_path": _section_path(),
             "bboxes": [],
             "pdf_page_label": "",
@@ -187,8 +174,6 @@ def _chunk_structured(
             return
         body = "\n\n".join(p for p in group["parts"] if p and p.strip()).strip()
         page = group["page"]
-        block_type = group["block_type"]
-        table_headers = group["table_headers"]
         section_path = group["section_path"]
         bbox = _bbox_metadata(group["bboxes"])
         pdf_page_label = group["pdf_page_label"]
@@ -207,9 +192,9 @@ def _chunk_structured(
                     "text": piece,
                     "page": page,
                     "chapter": chapter,
-                    "block_type": block_type,
+                    "block_type": "text",
                     "section_path": section_path,
-                    "table_headers": table_headers,
+                    "table_headers": "",
                     "context": context.strip(),
                     "bbox": bbox,
                     "pdf_page_label": pdf_page_label,
@@ -338,22 +323,7 @@ def _chunk_structured(
                 )
             continue
 
-        # 文本类：段落/独立说明合并进当前文本组；公式由上面的独立分支处理。
-        if btype in _TEXT_LIKE_BLOCKS or btype.startswith("text"):
-            if group is None:
-                group = _new_group(block.page)
-            elif group["page"] != block.page:
-                _flush()
-                group = _new_group(block.page)
-            if block.text and block.text.strip():
-                group["parts"].append(block.text.strip())
-                group["bboxes"].append(block.bbox)
-                if not group["pdf_page_label"]:
-                    group["pdf_page_label"] = block.pdf_page_label
-                group["textbook_references"].extend(block.textbook_references)
-            continue
-
-        # 未知类型 block：按文本兜底，避免丢失内容
+        # 正文、独立说明与未知类型均合并为文本组；特殊块已在上方处理。
         if group is None:
             group = _new_group(block.page)
         elif group["page"] != block.page:

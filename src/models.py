@@ -10,6 +10,8 @@ class Citation(BaseModel):
     page: Optional[int] = None
     snippet: str
     score: float
+    evidence_role: Literal['model_selected', 'retrieval_candidate'] = 'retrieval_candidate'
+    evidence_index: int | None = Field(default=None, ge=1)
     source_version: str = ""
     effective_from: str = "0001-01-01"
     effective_to: str = "9999-12-31"
@@ -39,13 +41,22 @@ class IntentData(BaseModel):
 
 
 class AnswerData(BaseModel):
+    execution: dict | None = None
     answer: str
     citations: list[Citation] = []
     grounded: bool = True
     intent: IntentData | None = None
+    response_kind: Literal["answer", "clarification", "status", "task_result", "conversation"] = "answer"
+    task: dict | None = None
+    artifacts: list[dict] = []
+    steps: list[str] = []
+    tool_calls: list[dict] = []
+    agentic: bool = False
+    agent_used: bool = False
 
 
 class AskRequest(BaseModel):
+    breakpoints: list[str] = Field(default_factory=list, max_length=40)
     question: str = Field(..., min_length=1, description="问题内容不能为空")
     course_id: str = Field(..., min_length=1, description="课程 ID，检索隔离必填")
     mode: Literal["auto", "qa", "concept", "chapter"] = "auto"
@@ -53,21 +64,27 @@ class AskRequest(BaseModel):
     scenario: str | None = Field(default=None, max_length=80, description="固定适用场景键；未传则不过滤")
     as_of: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="证据生效日 YYYY-MM-DD")
     stream: bool = False
+    scope_override: bool = Field(default=False, description="显式使用提供的场景与日期；空日期清除追问继承")
 
 
 class AgentRunRequest(BaseModel):
+    breakpoints: list[str] = Field(default_factory=list, max_length=40)
+    conversation_id: str | None = Field(default=None, max_length=128)
     question: str = Field(..., min_length=1, description="问题内容不能为空")
     course_id: str = Field(..., min_length=1, description="课程 ID，检索隔离必填")
-    mode: Literal["qa", "concept"] = "qa"
-    max_steps: int = Field(default=3, ge=1, le=10, description="最大检索/改写轮数")
+    mode: Literal["auto", "qa", "concept", "chapter"] = "auto"
+    max_steps: int = Field(default=6, ge=1, le=10, description="最大工具执行轮数；固定图模式为检索/改写轮数")
     top_k: int | None = Field(default=None, ge=1, description="单轮检索候选数，缺省用全局配置")
     score_threshold: float | None = Field(default=None, ge=0, le=1, description="判定检索足够的阈值，缺省用全局配置")
     scenario: str | None = Field(default=None, max_length=80, description="固定适用场景键")
     as_of: str | None = Field(default=None, pattern=r"^\d{4}-\d{2}-\d{2}$", description="证据生效日 YYYY-MM-DD")
-    agentic: bool = Field(default=False, description="启用 P2-C 受控工具调用循环；失败自动降级 P2-B")
+    scope_override: bool = Field(default=False, description="显式覆盖范围；空值清除继承")
+    agentic: bool = Field(default=True, description="默认使用 Agent 工具决策；失败执行 RAG 工具，false 显式选择固定图")
 
 
 class AgentRunData(BaseModel):
+    execution: dict | None = None
+    intent: IntentData | None = None
     answer: str
     citations: list[Citation] = []
     grounded: bool = True
@@ -75,11 +92,38 @@ class AgentRunData(BaseModel):
     tool_calls: list[dict] = []
     agentic: bool = False
     agent_used: bool = True
+    response_kind: Literal["answer", "clarification", "status", "task_result", "conversation"] = "answer"
+    task: dict | None = None
+    artifacts: list[dict] = []
 
 
 QuestionType = Literal["choice", "fill_blank", "short_answer"]
+
+
+class AgentControlRequest(BaseModel):
+    course_id: str = Field(min_length=1)
+    action: Literal['pause','resume','step','cancel','retry','breakpoints']
+    breakpoints: list[str] | None = Field(default=None, max_length=40)
 QuestionDifficulty = Literal["easy", "medium", "hard"]
 QuestionStatus = Literal["draft", "reviewed"]
+
+
+class PracticeStartRequest(BaseModel):
+    course_id: str = Field(..., min_length=1)
+    question_id: str = Field(..., min_length=1)
+    request_id: str = Field(..., min_length=1, max_length=80, pattern=r"^[a-zA-Z0-9_-]+$")
+    previous_attempt_id: str | None = Field(default=None, min_length=1)
+
+
+class PracticeSubmitRequest(BaseModel):
+    course_id: str = Field(..., min_length=1)
+    selected_option: int | None = Field(default=None, ge=0, le=7, strict=True)
+    user_answer: str = Field(default="", max_length=4000)
+
+
+class PracticeAssessmentRequest(BaseModel):
+    course_id: str = Field(..., min_length=1)
+    correct: bool = Field(..., strict=True)
 
 
 class QuestionCreateRequest(BaseModel):

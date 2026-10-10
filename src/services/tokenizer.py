@@ -79,22 +79,6 @@ class ChineseTokenizer:
         if self._jieba:
             self._jieba.add_word(word, freq=freq, tag=tag)  # type: ignore[union-attr]
 
-    def add_words(self, words: list[str]) -> None:
-        """批量添加自定义词汇。"""
-        if self._jieba:
-            jieba_mod = self._jieba
-            for w in words:
-                jieba_mod.add_word(w)  # type: ignore[union-attr]
-
-    def load_user_dict(self, path: str) -> None:
-        """加载用户自定义词典文件。
-
-        词典格式：每行一个词，可包含词频和词性（空格分隔）。
-        """
-        if self._jieba:
-            self._jieba.load_userdict(path)  # type: ignore[union-attr]
-            logger.info("已加载用户词典: %s", path)
-
 
 def _get_tokenizer() -> ChineseTokenizer:
     return ChineseTokenizer()

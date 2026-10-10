@@ -86,6 +86,8 @@ def _parse_pdf(path: str) -> ParsedDocument:
                     "PDF_PARSER=mineru 但找不到命令 %s，回退现有链路", p.mineru_cmd
                 )
 
+    # 成功评估过的同参数 OCR 候选已由 consider 保存，失败尝试仍允许重试。
+    ocr_considered = False
     # 原生文本 PDF：直接提取
     try:
         doc = _parse_pdf_pymupdf4llm(path)
@@ -98,6 +100,7 @@ def _parse_pdf(path: str) -> ParsedDocument:
             doc = _enrich_document_with_formulas(doc, path)
             if consider(doc, "pymupdf4llm:ocr"):
                 return best_doc  # type: ignore[return-value]
+            ocr_considered = True
     except Exception as e:
         logger.warning("pymupdf4llm 失败，回退 fitz: %s", e)
 
@@ -105,7 +108,7 @@ def _parse_pdf(path: str) -> ParsedDocument:
     if consider(doc, "fitz"):
         return best_doc  # type: ignore[return-value]
 
-    if p.pdf_use_ocr and not p.pdf_force_ocr:
+    if p.pdf_use_ocr and not p.pdf_force_ocr and not ocr_considered:
         try:
             ocr = _parse_pdf_pymupdf4llm(path, force_ocr=True)
             ocr = _enrich_document_with_formulas(ocr, path)

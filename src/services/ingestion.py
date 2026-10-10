@@ -17,7 +17,7 @@ from src.services.ingestion_parts.chapters import (
     assign_chapters,
 )
 from src.services.ingestion_parts.structured_chunks import _chunk_structured
-from src.services.ingestion_parts.text_chunks import _chunk_document, _split_text
+from src.services.ingestion_parts.text_chunks import _chunk_document
 from src.services.parsing import SUPPORTED_EXTENSIONS, parse_file
 from src.services.retrieval import invalidate_bm25_cache
 from src.services.storage.catalog_store import (
@@ -193,77 +193,41 @@ def ingest_file(
             ds.update_evidence_metadata(doc_id, evidence)
 
         if parsed.has_blocks:
-            # MinerU 结构化切片：语义分组 + 丰富 metadata
-            chunk_texts = [c["text"] for c in structured]
-            chunk_pages = [c["page"] for c in structured]
-            chapters = [c["chapter"] for c in structured]
-            block_types = [c["block_type"] for c in structured]
-            section_paths = [c["section_path"] for c in structured]
-            table_headers = [c["table_headers"] for c in structured]
-            contexts = [c["context"] for c in structured]
-            bboxes = [c["bbox"] for c in structured]
-            pdf_page_labels = [c["pdf_page_label"] for c in structured]
-            textbook_references = [c["textbook_references"] for c in structured]
-            content_roles = [c["content_role"] for c in structured]
-            image_paths = [c.get("image_path", "") for c in structured]
-            image_captions = [c.get("image_caption", "") for c in structured]
+            chunks = structured
         else:
-            # 非结构化文档：保持原有按页分块 + 章节推断
             raw_chunks = _chunk_document(
-                parsed,
-                chunk_size=config.chunk.chunk_size,
-                chunk_overlap=config.chunk.chunk_overlap,
+                parsed, chunk_size=config.chunk.chunk_size, chunk_overlap=config.chunk.chunk_overlap,
             )
             if not raw_chunks:
                 raise BadRequestException("分块结果为空")
-            chunk_texts = [c[0] for c in raw_chunks]
-            chunk_pages = [c[1] for c in raw_chunks]
-            chapters = assign_chapters(full_text, chunk_texts, pages=chunk_pages)
-            chunk_texts = _enrich_chunks_with_context(full_text, chunk_texts)
-            block_types = ["text"] * len(chunk_texts)
-            section_paths = [""] * len(chunk_texts)
-            table_headers = [""] * len(chunk_texts)
-            contexts = [""] * len(chunk_texts)
-            bboxes = [""] * len(chunk_texts)
-            pdf_page_labels = [""] * len(chunk_texts)
-            textbook_references = [""] * len(chunk_texts)
-            content_roles = ["content"] * len(chunk_texts)
-            image_paths = [""] * len(chunk_texts)
-            image_captions = [""] * len(chunk_texts)
+            texts, pages = zip(*raw_chunks)
+            chapters = assign_chapters(full_text, list(texts), pages=list(pages))
+            enriched = _enrich_chunks_with_context(full_text, list(texts))
+            chunks = [
+                {"text": text, "page": page, "chapter": chapters[i] if i < len(chapters) else "",
+                 "block_type": "text"}
+                for i, (text, page) in enumerate(zip(enriched, pages))
+            ]
 
-        if not chunk_texts:
+        if not chunks:
             raise BadRequestException("分块结果为空")
-        logger.info("分块完成: %s, 共 %d 个 chunk", filename, len(chunk_texts))
-
+        chunk_texts = [chunk["text"] for chunk in chunks]
+        logger.info("分块完成: %s, 共 %d 个 chunk", filename, len(chunks))
         embeddings = embed_texts(chunk_texts)
-
-        chunk_dicts = []
-        for i, chunk_text in enumerate(chunk_texts):
-            chunk_dicts.append({
-                "doc_id": str(doc_id),
-                "source_file": filename,
-                "chunk_index": i,
-                "course": course,
-                "course_id": course_id,
-                "college_id": college_id,
-                "text": chunk_text,
-                "page": chunk_pages[i],
-                "chapter": chapters[i] if i < len(chapters) else "",
-                "block_type": block_types[i] if i < len(block_types) else "",
-                "section_path": section_paths[i] if i < len(section_paths) else "",
-                "table_headers": table_headers[i] if i < len(table_headers) else "",
-                "context": contexts[i] if i < len(contexts) else "",
-                "bbox": bboxes[i] if i < len(bboxes) else "",
-                "pdf_page_label": pdf_page_labels[i] if i < len(pdf_page_labels) else "",
-                "textbook_references": textbook_references[i] if i < len(textbook_references) else "",
-                "content_role": content_roles[i] if i < len(content_roles) else "content",
-                "image_path": image_paths[i] if i < len(image_paths) else "",
-                "image_caption": image_captions[i] if i < len(image_captions) else "",
-                "parser_name": parsed.parser_name,
-                "parse_quality": parsed.parse_quality,
-                "is_active": is_active,
-                **evidence,
-            })
+        defaults = dict.fromkeys((
+            "section_path", "table_headers", "context", "bbox", "pdf_page_label",
+            "textbook_references", "image_path", "image_caption",
+        ), "")
+        chunk_dicts = [
+            {
+                **defaults, "content_role": "content", **chunk,
+                "doc_id": str(doc_id), "source_file": filename, "chunk_index": i,
+                "course": course, "course_id": course_id, "college_id": college_id,
+                "parser_name": parsed.parser_name, "parse_quality": parsed.parse_quality,
+                "is_active": is_active, **evidence,
+            }
+            for i, chunk in enumerate(chunks)
+        ]
 
         wiped = _upsert_chunks_batched(vs, chunk_dicts, embeddings)
         if wiped:

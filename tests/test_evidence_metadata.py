@@ -1,6 +1,7 @@
 """证据元数据抽取、人工覆盖与场景/时效过滤。"""
 
 from src.services.evidence_metadata import extract_evidence_metadata, normalize_scope
+import pytest
 
 
 def _chunk(doc_id: str, text: str, **evidence):
@@ -30,6 +31,29 @@ def test_extract_version_effective_time_and_authority():
 def test_scope_normalizes_to_stable_key():
     assert normalize_scope(" 本科生 / 考试  ") == "本科生_考试"
     assert normalize_scope("") == "all"
+
+
+@pytest.mark.parametrize("day,expected", [
+    ("2026-01-01", {"all", "exam"}), ("2026-12-31", {"all", "exam"}),
+    ("2025-12-31", {"all"}), ("2027-01-01", {"all"}),
+])
+def test_vector_read_paths_share_scope_and_date_boundaries(vector_store, day, expected):
+    chunks = [
+        _chunk("all", "通用", chapter="第1章", applicability_scope="all"),
+        _chunk("exam", "考试", chapter="第1章", applicability_scope="考试",
+               effective_from="2026-01-01", effective_to="2026-12-31"),
+        _chunk("other", "实验", chapter="第1章", applicability_scope="实验"),
+        _chunk("foreign", "他课", chapter="第1章", course_id="other-course"),
+        _chunk("inactive", "历史", chapter="第1章", is_active=False),
+    ]
+    vector = [1.0] + [0.0] * 7
+    vector_store.upsert(chunks, [vector] * len(chunks))
+    scope = dict(course_id="course-default", scenario="考试", as_of=day)
+    reads = [vector_store.search(vector, top_k=10, **scope),
+             vector_store.get_chunks(**scope), vector_store.get_by_course_id(**scope),
+             vector_store.get_by_chapter(chapter="第1章", **scope)]
+    for hits in reads:
+        assert {h["metadata"]["doc_id"] for h in hits} == expected
 
 
 def test_manual_metadata_sync_and_filtered_vector_search(doc_store, vector_store):

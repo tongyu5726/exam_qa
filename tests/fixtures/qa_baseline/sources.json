@@ -1,0 +1,6 @@
+[
+  {"file":"signals.md","evidence":{"source_version":"SigSys-F-1","authority_level":40,"authority_label":"课程资料"}},
+  {"file":"lab.md","evidence":{"source_version":"LabSheet-3","effective_from":"2024-02-01","effective_to":"2026-02-01","applicability_scope":"实验","authority_level":40,"authority_label":"课程资料"}},
+  {"file":"policy.md","evidence":{"source_version":"Policy-2024A","effective_from":"2024-09-01","effective_to":"2025-08-31","applicability_scope":"final_exam","authority_level":50,"authority_label":"机构文件"}},
+  {"file":"policy-draft.md","evidence":{"source_version":"0.1","effective_from":"2024-09-01","effective_to":"2025-08-31","applicability_scope":"final_exam","authority_level":10,"authority_label":"草案或试行稿"}}
+]

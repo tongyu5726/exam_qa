@@ -9,7 +9,7 @@ from src.config import config
 from src.exceptions import BadRequestException, LLMAPIException
 from src.services.ingestion import _chunk_structured, ingest_file
 from src.services.parsing import ParsedBlock, ParsedDocument
-from src.services.query import _needs_visual_verification, _verify_visual_evidence
+from src.services.rag import _needs_visual_verification, _verify_visual_evidence
 from src.services.visual_coverage import ensure_pdf_visual_coverage
 from src.services.vision import VisionClient
 

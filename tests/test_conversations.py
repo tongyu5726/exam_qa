@@ -1,22 +1,13 @@
 ﻿"""对话持久化存储测试。"""
 
-import tempfile
-from pathlib import Path
-
 import pytest
 import time
 from src.services.storage.conversation_store import ConversationStore
 
 
 @pytest.fixture
-def conv_store():
-    tmp = tempfile.mkdtemp()
-    db_path = Path(tmp) / "test_conversations.db"
-    store = ConversationStore(str(db_path))
-    yield store
-    store.close()
-    import shutil
-    shutil.rmtree(tmp, ignore_errors=True)
+def conv_store(tmp_path):
+    return ConversationStore(str(tmp_path / "test_conversations.db"))
 
 
 class TestConversationStore:

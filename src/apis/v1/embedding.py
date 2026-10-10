@@ -53,6 +53,6 @@ async def warmup_embedding(
         "code": status.HTTP_200_OK,
         "data": {
             **build_embedding_status(embedding),
-            "message": "已开始拉取/加载，请轮询 /embedding/status",
+            "message": "已开始加载，优先使用本地缓存；进度见 /embedding/status",
         },
     }

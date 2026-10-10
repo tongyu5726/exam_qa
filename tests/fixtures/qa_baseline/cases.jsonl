@@ -1,0 +1,30 @@
+{"id":"S01","category":"公式","question":"写出角频率形式的连续时间傅里叶正变换。","source":"signals.md","anchor":"角频率形式的正变换定义为","required_facts":["积分范围为负无穷到正无穷","指数为负 jωt"]}
+{"id":"S02","category":"公式","question":"连续时间傅里叶逆变换的前置系数是什么？","source":"signals.md","anchor":"逆变换","required_facts":["1/(2π)，不是 1/π"]}
+{"id":"S03","category":"公式","question":"傅里叶逆变换的指数符号和积分变量是什么？","source":"signals.md","anchor":"e^{j\\omega t}","required_facts":["指数为正 jωt，积分变量为 ω"]}
+{"id":"S04","category":"公式","question":"给出连续时间卷积积分的表达式。","source":"signals.md","anchor":"h(t-\\tau)","required_facts":["x(τ)h(t-τ) 对 τ 积分","范围负无穷到正无穷"]}
+{"id":"S05","category":"条件","question":"LTI 系统的零状态响应与输入和冲激响应有什么关系？","source":"signals.md","anchor":"LTI 系统的零状态响应","required_facts":["等于二者卷积","限定 LTI 和零状态响应"]}
+{"id":"S06","category":"条件","question":"使用讲义采样定理需要满足什么频谱条件？","source":"signals.md","anchor":"频谱在 |ω| > ω_m 为零","required_facts":["带限，最高角频率 ω_m 外频谱为零"]}
+{"id":"S07","category":"条件","question":"讲义要求采样角频率严格大于还是等于两倍最高角频率？","source":"signals.md","anchor":"ω_s > 2ω_m","required_facts":["严格大于","等于属于临界情况"]}
+{"id":"S08","category":"条件","question":"这里的奈奎斯特率指什么？","source":"signals.md","anchor":"2ω_m 为奈奎斯特率","required_facts":["2ω_m"]}
+{"id":"S09","category":"条件","question":"采样频率等于奈奎斯特率时，讲义如何提醒实践使用？","source":"signals.md","anchor":"实践中需留保护带","required_facts":["属于临界情况","实践需留保护带"]}
+{"id":"S10","category":"公式","question":"卷积表达式中冲激响应是 h(τ) 还是 h(t-τ)？","source":"signals.md","anchor":"h(t-\\tau)","required_facts":["h(t-τ)"]}
+{"id":"L01","category":"表格","question":"电路实验参数表中 A1 的电压、电流、功率是多少？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"| A1 | 5.0 | 0.20 | 1.00","required_facts":["5.0 V、0.20 A、1.00 W"]}
+{"id":"L02","category":"表格","question":"电路实验参数表 A2 的功率是多少？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"| A2 | 5.0 | 0.35 | 1.75","required_facts":["1.75 W"]}
+{"id":"L03","category":"表格","question":"电路实验参数表 B1 的电流是多少？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"| B1 | 3.3 | 0.10 | 0.33","required_facts":["0.10 A"]}
+{"id":"L04","category":"表格","question":"电路实验参数表 B2 的电压和功率分别是多少？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"| B2 | 12.0 | 0.05 | 0.60","required_facts":["12.0 V、0.60 W"]}
+{"id":"L05","category":"表格","question":"电路实验表中哪个支路功率最高，是多少？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"| A2 | 5.0 | 0.35 | 1.75","required_facts":["A2，1.75 W"]}
+{"id":"L06","category":"表格","question":"电路实验表中哪个支路功率最低，是多少？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"| B1 | 3.3 | 0.10 | 0.33","required_facts":["B1，0.33 W"]}
+{"id":"L07","category":"条件","question":"电路实验实测功率超过 2.00W 时应做什么？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"必须断电并记录异常","required_facts":["断电","记录异常"]}
+{"id":"L08","category":"表格","question":"电路实验参数表里额定功率不得超过 2.00W 的备注在哪一行？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"| B2 | 12.0","required_facts":["B2"]}
+{"id":"L09","category":"时效","question":"在 2025-01-01 电路参数表是哪一版本，生效期是什么？","scenario":"实验","as_of":"2025-01-01","source":"lab.md","anchor":"生效期 2024-02-01 至 2026-02-01","required_facts":["LabSheet-3","2024-02-01 至 2026-02-01"]}
+{"id":"P01","category":"时效","question":"2025-01-01 正式课程考核文件的版本是什么？","scenario":"final_exam","as_of":"2025-01-01","source":"policy.md","anchor":"Policy-2024A","required_facts":["Policy-2024A"]}
+{"id":"P02","category":"范围","question":"正式课程考核须知适用于什么考试？","scenario":"final_exam","as_of":"2025-01-01","source":"policy.md","anchor":"仅适用于期末闭卷考试","required_facts":["期末闭卷考试","不适用于实验和平时分"]}
+{"id":"P03","category":"规则","question":"正式课程考核须知中缺考如何处理？","scenario":"final_exam","as_of":"2025-01-01","source":"policy.md","anchor":"缺考按 0 分处理","required_facts":["按 0 分"]}
+{"id":"P04","category":"规则","question":"正式课程考核须知说补考安排以什么为准？","scenario":"final_exam","as_of":"2025-01-01","source":"policy.md","anchor":"补考安排以学院通知为准","required_facts":["学院通知"]}
+{"id":"P05","category":"条件","question":"补考一定覆盖整门课程成绩吗？","scenario":"final_exam","as_of":"2025-01-01","source":"policy.md","anchor":"补考不一定覆盖整门课程成绩","required_facts":["不一定","按学校规定另行计算"]}
+{"id":"C01","category":"冲突","question":"以正式课程考核须知为依据，平时、实验、期末成绩占比分别多少？","scenario":"final_exam","as_of":"2025-01-01","source":"policy.md","anchor":"平时 30% + 实验 20% + 期末 50%","required_facts":["30%、20%、50%","采用正式文件而非草案"]}
+{"id":"C02","category":"冲突","question":"讨论稿提出期末 40%，正式课程考核文件规定期末多少，应该以哪个为准？","scenario":"final_exam","as_of":"2025-01-01","source":"policy.md","anchor":"期末 50%","required_facts":["正式文件期末 50%","说明权威选择依据"]}
+{"id":"N01","category":"拒答","question":"2026-09-30 当前有效的课程考核成绩比例是多少？","scenario":"final_exam","as_of":"2026-09-30","expect_refusal":true,"required_facts":["固定拒答，不使用过期的比例"]}
+{"id":"N02","category":"隔离","question":"电路实验参数表中 A2 的功率是多少？","empty_course":true,"expect_refusal":true,"required_facts":["空课程不能命中他课资料，固定拒答"]}
+{"id":"N03","category":"拒答","question":"火星最新一任总督叫什么名字？","expect_refusal":true,"required_facts":["资料无依据，固定拒答"]}
+{"id":"N04","category":"范围","question":"以实验场景下有效文件为依据，正式课程考核成绩比例是多少？","scenario":"实验","as_of":"2025-01-01","expect_refusal":true,"required_facts":["不能使用 final_exam 场景的考核比例"]}

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import socket
 import time
 from contextlib import asynccontextmanager
 from logging.handlers import RotatingFileHandler
@@ -26,8 +25,9 @@ from src.dependencies import (
     get_vision_client,
 )
 from src.exceptions import AppException
-from src.services.embedding import get_embedding_client
+from src.services.embedding import get_embedding_client, start_warmup_background
 from src.services.env_store import env_was_created
+from src.services.port_selection import choose_start_port, port_available
 from src.services.storage.catalog_store import (
     DEFAULT_COLLEGE_ID,
     DEFAULT_COURSE_ID,
@@ -73,7 +73,7 @@ def _embedding_check() -> StartupCheck:
         return StartupCheck("Embedding", "warn", "未配置")
 
     if provider == "local":
-        return StartupCheck("Embedding", "warn", f"{model} · 设置页手动加载")
+        return StartupCheck("Embedding", "warn", f"{model} · 自动加载本地缓存，进度见设置页")
     return StartupCheck("Embedding", "warn", f"{model} · 首次使用时连接")
 
 
@@ -114,7 +114,10 @@ async def lifespan(app: FastAPI):
         raise RuntimeError("存储层连通性校验失败，阻止启动")
 
     app.state.llm_health = "ok" if llm.configured else "unavailable"
-    app.state.embedding_health = get_embedding_client().status()
+    embedding = get_embedding_client()
+    if embedding.provider == "local":
+        start_warmup_background(embedding, local_only=True)
+    app.state.embedding_health = embedding.status()
 
     catalog.require_course(DEFAULT_COURSE_ID)
 
@@ -252,41 +255,40 @@ async def legacy_settings_redirect():
 app.mount("/sz", StaticFiles(directory=str(_VUE_DIST_DIR), html=True, check_dir=False), name="sz")
 
 
-def _bind_check_host(host: str) -> str:
-    return "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
-
-
 def _is_port_in_use(host: str, port: int) -> bool:
-    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        sock.bind((host, port))
-        return False
-    except OSError:
-        return True
-    finally:
-        sock.close()
+    return not port_available(host, port)
 
 
 def main() -> None:
     """CLI 入口：uv run exam"""
+    import argparse
     import sys
 
     import uvicorn
+
+    parser = argparse.ArgumentParser(description="启动溯知服务")
+    parser.add_argument("--port", type=int, help="本次启动端口，不修改 .env")
+    parser.add_argument("--no-port-menu", action="store_true", help="使用配置端口，不显示交互菜单")
+    args = parser.parse_args()
+    if args.port is not None and not 1 <= args.port <= 65535:
+        parser.error("--port 须在 1-65535")
 
     setup_logging(level=config.log_level)
     _attach_file_handler()
 
     host = config.host
-    port = config.port
-    check_host = _bind_check_host(host)
-    if _is_port_in_use(check_host, port):
+    port = args.port if args.port is not None else (
+        config.port if args.no_port_menu else choose_start_port(host, config.port)
+    )
+    if port is None:
+        return
+    if _is_port_in_use(host, port):
         logger.error("端口 %s 已被占用或系统保留，无法绑定", port)
-        logger.info("可尝试: PORT=%s uv run exam", port + 1)
+        logger.info("请重新启动并在端口菜单中选择其他端口，或修改 PORT")
         raise SystemExit(1)
 
     # ponytail: Windows 上 reload 子进程常导致 Ctrl+C 无法退出
-    use_reload = config.debug and sys.platform != "win32"
+    use_reload = config.debug and sys.platform != "win32" and port == config.port
     if config.debug and sys.platform == "win32":
         logger.warning("Windows 下已禁用热重载，避免 Ctrl+C 无法退出")
 
@@ -299,6 +301,8 @@ def main() -> None:
         timeout_graceful_shutdown=5,
     )
     server = uvicorn.Server(uvi_config)
+    app.state.bound_host = host
+    app.state.bound_port = port
 
     try:
         asyncio.run(server.serve())

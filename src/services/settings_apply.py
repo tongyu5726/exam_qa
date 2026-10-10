@@ -6,12 +6,6 @@ APPLY_IMMEDIATE = "immediate"
 APPLY_NEXT_TURN = "next_turn"
 APPLY_RESTART = "restart"
 
-APPLY_MODE_LABELS: dict[str, str] = {
-    APPLY_IMMEDIATE: "立即生效",
-    APPLY_NEXT_TURN: "下次请求生效",
-    APPLY_RESTART: "需重启服务",
-}
-
 SECTION_APPLY_MODE: dict[str, str] = {
     "llm": APPLY_NEXT_TURN,
     "embedding": APPLY_NEXT_TURN,

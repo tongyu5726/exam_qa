@@ -8,12 +8,13 @@ from dataclasses import asdict, dataclass
 from datetime import date
 from typing import Literal
 
+from src.services.dialogue import classify_dialogue
 from src.services.evidence_metadata import normalize_scope
 from src.services.llm import LLMClient
 
 IntentLayer = Literal["rule", "context", "llm_fallback", "default"]
 IntentTask = Literal[
-    "qa", "concept", "chapter", "rule_query", "version_compare", "question_generate"
+    "qa", "concept", "chapter", "rule_query", "version_compare", "question_generate", "study_goal", "conversation"
 ]
 
 _DATE = re.compile(r"(20\d{2})[年./-](\d{1,2})[月./-](\d{1,2})日?")
@@ -33,7 +34,7 @@ _QUESTION_GENERATE = re.compile(
     r"(?:给我|帮我)(?:几|[一二三四五六七八九十\d]+)(?:个|道|份)?|"
     r"(?:出|生成|创建|来|命制|组|做成))"
     r"(?:几|[一二三四五六七八九十\d]+)?(?:个|道|份)?[^，。！？]{0,24}"
-    r"(?:题目|试题|大题|小题|选择题|填空题|简答题|试卷|卷子)"
+    r"(?:练习题|题目|试题|大题|小题|选择题|填空题|简答题|试卷|卷子)"
 )
 
 
@@ -72,14 +73,14 @@ def _extract_scenario(text: str) -> str | None:
 def _rule_intent(question: str) -> IntentDecision | None:
     scenario = _extract_scenario(question)
     as_of = _extract_date(question)
-    if _QUESTION_GENERATE.search(question):
+    if _QUESTION_GENERATE.search(question) or "组卷" in question:
         return IntentDecision(
             task="question_generate",
             scenario=scenario,
             as_of=as_of,
             confidence=0.98,
             layer="rule",
-            rationale="命中出题或组卷表达，路由到我的题库",
+            rationale="命中出题或组卷表达，建立受证据约束的任务",
         )
     if _COMPARE.search(question):
         return IntentDecision(task="version_compare", scenario=scenario, as_of=as_of, confidence=0.97, layer="rule", rationale="命中版本对比表达")
@@ -135,8 +136,11 @@ def _llm_intent(question: str, previous: dict | None, llm: LLMClient | None) -> 
     return IntentDecision(task=task, mode=mode, scenario=normalize_scope(data.get("scenario")) if data.get("scenario") else None, as_of=as_of, confidence=float(confidence), layer="llm_fallback", rationale="复杂指代由受约束 LLM 生成意图计划")
 
 
-def resolve_intent(question: str, *, requested_mode: str = "auto", scenario: str | None = None, as_of: str | None = None, previous: dict | None = None, llm: LLMClient | None = None) -> IntentDecision:
+def resolve_intent(question: str, *, requested_mode: str = "auto", scenario: str | None = None, as_of: str | None = None, previous: dict | None = None, llm: LLMClient | None = None, scope_override: bool = False) -> IntentDecision:
     """按漏斗解析，显式 API 参数和 mode 始终优先于自动判断。"""
+    if classify_dialogue(question):
+        return IntentDecision(task="conversation", mode="qa", confidence=1.0, layer="rule",
+                              rationale="身份、能力或礼貌交流，不需要课程取证")
     rule = _rule_intent(question)
     # 指代性追问里的“规定”等泛化规则词没有独立范围，优先继承上一轮已确认状态；
     # 当前问题若明确给出场景、日期或章节，仍由规则层直接决定。
@@ -155,7 +159,7 @@ def resolve_intent(question: str, *, requested_mode: str = "auto", scenario: str
     mode = requested_mode if requested_mode in {"qa", "concept", "chapter"} else decision.mode
     return IntentDecision(
         task=decision.task, mode=mode,
-        scenario=normalize_scope(scenario) if scenario else decision.scenario,
-        as_of=as_of or decision.as_of, confidence=decision.confidence,
+        scenario=normalize_scope(scenario) if scope_override or scenario else decision.scenario,
+        as_of=as_of if scope_override else as_of or decision.as_of, confidence=decision.confidence,
         layer=decision.layer, rationale=decision.rationale,
     )

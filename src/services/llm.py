@@ -59,6 +59,11 @@ class OpenAIClient:
             )
 
     @property
+    def model(self) -> str:
+        """Public model identifier; never expose connection credentials."""
+        return self._model
+
+    @property
     def configured(self) -> bool:
         return self._client is not None
 

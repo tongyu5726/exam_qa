@@ -67,20 +67,21 @@ def _annotate_block(block: ParsedBlock) -> ParsedBlock:
 _CAPTION_TYPES = frozenset({"image_caption", "table_caption", "figure_caption"})
 
 
+def _line_texts(block: dict) -> list[str]:
+    parts = []
+    for line in block.get("lines") or []:
+        text = (line.get("text") or line.get("content") or "") if isinstance(line, dict) else str(line)
+        if text.strip():
+            parts.append(text.strip())
+    return parts
+
+
 def _caption_text(block: dict) -> str:
     """图片/表格说明文本（兼容 text 与 lines 两种形态）。"""
     text = (block.get("text") or "").strip()
     if text:
         return text
-    parts = []
-    for ln in block.get("lines") or []:
-        if isinstance(ln, dict):
-            t = ln.get("text") or ln.get("content") or ""
-        else:
-            t = str(ln)
-        if t.strip():
-            parts.append(t.strip())
-    return " ".join(parts)
+    return " ".join(_line_texts(block))
 
 
 def _as_bbox(raw) -> tuple | None:

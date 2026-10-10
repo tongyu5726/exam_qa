@@ -92,9 +92,27 @@ class TestExtractTable:
 
 
 class TestAnalyzeChart:
+    def test_requested_figure_wins_over_higher_score_and_forwards_scope(self, monkeypatch):
+        from src.services import retrieval
+
+        monkeypatch.setattr(tools, "_embed_query", lambda _: [.1])
+        monkeypatch.setattr(retrieval, "_cached_query_vec", lambda *_: (.1,))
+        wrong = _hit("图 2.1 其他图", block_type="image_summary", score=.95)
+        wrong["id"] = "wrong"
+        wanted = _hit("图 5.3-1 频谱图", block_type="image_summary", score=.7)
+        wanted["id"] = "wanted"
+        vs = _vs(search=[wrong, wanted])
+        out = tools.analyze_chart("图 5.3-1 说明什么", vs, "course-default",
+                                  scenario="考试", as_of="2026-10-04")
+        assert out["summaries"] == ["图 5.3-1 频谱图"]
+        for call in vs.search.call_args_list:
+            assert call.kwargs["course_id"] == "course-default"
+            assert call.kwargs["scenario"] == "考试"
+            assert call.kwargs["as_of"] == "2026-10-04"
+
     def test_no_summary_returns_note(self):
         vs = _vs(chunks=[], search=[])
-        with patch("src.services.agent.tools._embed_query", return_value=[0.1]):
+        with patch("src.services.retrieval._cached_query_vec", return_value=[0.1]):
             out = tools.analyze_chart("这张图说明什么", vs, "course-default")
         assert out["found"] is False
         assert "未找到图表摘要" in out["note"]
@@ -104,7 +122,7 @@ class TestAnalyzeChart:
         llm.configured = True
         llm.chat.return_value = "该图展示了奈奎斯特采样率。"
         vs = _vs(search=[_hit("奈奎斯特示意图", block_type="image_summary", page=5)])
-        with patch("src.services.agent.tools._embed_query", return_value=[0.1]):
+        with patch("src.services.retrieval._cached_query_vec", return_value=[0.1]):
             out = tools.analyze_chart("这张图说明什么", vs, "course-default", llm)
         assert out["found"] is True
         assert out["analysis"] == "该图展示了奈奎斯特采样率。"
@@ -113,7 +131,7 @@ class TestAnalyzeChart:
 
     def test_without_llm_returns_raw_summaries(self):
         vs = _vs(search=[_hit("频谱图摘要", block_type="image_summary")])
-        with patch("src.services.agent.tools._embed_query", return_value=[0.1]):
+        with patch("src.services.retrieval._cached_query_vec", return_value=[0.1]):
             out = tools.analyze_chart("这张图说明什么", vs, "course-default")
         assert out["found"] is True
         assert out["summaries"] == ["频谱图摘要"]

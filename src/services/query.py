@@ -1,36 +1,25 @@
-"""查询编排：mode 路由 → 检索 / 章节聚合 → 生成 / 拒答。"""
+"""对话入口：意图与会话 → Agent → 工具 → 保存回答。"""
 
 import logging
 import re
-from pathlib import Path
 from datetime import date
+from dataclasses import replace
 
-from src.config import config
-from src.exceptions import BadRequestException, LLMAPIException
+from src.exceptions import BadRequestException
 from src.models import AnswerData, Citation, IntentData
+from src.services.agent import run_agent, run_agent_stream
+from src.services.agent.tasks import plan_task
+from src.services.agent import study_goals
 from src.services.evidence_metadata import evidence_reason
-from src.services.generation import generate, stream_generate
 from src.services.intent import IntentDecision, resolve_intent
 from src.services.llm import OpenAIClient
-from src.services.retrieval import retrieve, retrieve_visual_evidence
 from src.services.storage.conversation_store import ConversationStore
 from src.services.storage.vector_store import ChromaVectorStore
 
 logger = logging.getLogger(__name__)
 
 SUPPORTED_MODES = frozenset({"auto", "qa", "concept", "chapter"})
-CONCEPT_TOP_K = 12
-CHAPTER_MAX_CHUNKS = 24
-_REFUSAL = "资料库中未找到相关内容"
-_QUESTION_BANK_ROUTE = (
-    "已识别为出题请求。请进入“我的题库”设置题型、数量、难度和章节；"
-    "题库 Agent 会先检索当前课程资料，再生成并保存题目。"
-)
-_VISUAL_QUERY_RE = re.compile(
-    r"图(?:表|像|中|\s*\d)|曲线|坐标|横轴|纵轴|图例|趋势|峰值|谷值|"
-    r"波数|反射率|透射率|高于|低于|以上还是以下|随.+变化",
-    re.IGNORECASE,
-)
+
 
 
 def _validate(mode: str, course_id: str) -> None:
@@ -66,146 +55,66 @@ def _intent_data(intent: IntentDecision) -> IntentData:
 def _citations(
     raw: list[dict], *, scenario: str | None = None, as_of: str | None = None
 ) -> list[Citation]:
-    return [
-        Citation(
-            doc_id=str(c.get("doc_id") or ""),
-            source_file=c["source_file"],
-            page=c.get("page"),
-            snippet=c["snippet"],
-            score=c["score"],
-            source_version=c.get("source_version", ""),
-            effective_from=c.get("effective_from", "0001-01-01"),
-            effective_to=c.get("effective_to", "9999-12-31"),
-            authority_level=int(c.get("authority_level") or 30),
-            authority_label=c.get("authority_label", "教学材料"),
-            applicability_scope=c.get("applicability_scope", "all"),
-            selection_reason=evidence_reason(c, scenario=scenario, as_of=as_of),
-            chapter=c.get("chapter", ""),
-            section_path=c.get("section_path", ""),
-            block_type=c.get("block_type", ""),
-            bbox=c.get("bbox", ""),
-            pdf_page_label=c.get("pdf_page_label", ""),
-            textbook_references=c.get("textbook_references", ""),
-            content_role=c.get("content_role", "content"),
-            parser_name=c.get("parser_name", ""),
-            parse_quality=float(c.get("parse_quality") or 0.0),
-        )
-        for c in raw
-    ]
+    return [Citation(**{
+        **citation,
+        "doc_id": str(citation.get("doc_id") or ""),
+        "authority_level": int(citation.get("authority_level") or 30),
+        "parse_quality": float(citation.get("parse_quality") or 0.0),
+        "selection_reason": evidence_reason(citation, scenario=scenario, as_of=as_of),
+    }) for citation in raw]
 
 
-def _retrieve(
-    question: str,
-    mode: str,
-    vs: ChromaVectorStore,
-    course_id: str,
-    *,
-    scenario: str | None = None,
-    as_of: str | None = None,
-) -> list[dict]:
-    if mode == "chapter":
-        kwargs: dict[str, str] = {}
-        if scenario:
-            kwargs["scenario"] = scenario
-        if as_of:
-            kwargs["as_of"] = as_of
-        hits = vs.get_by_chapter(course_id, question.strip(), **kwargs)
-        capped: list[dict] = []
-        for h in hits[:CHAPTER_MAX_CHUNKS]:
-            item = dict(h)
-            meta = dict(h.get("metadata") or {})
-            item["metadata"] = meta
-            item["score"] = 1.0
-            capped.append(item)
-        return capped
-    hits = retrieve(
-        query=question,
-        vs=vs,
-        course_id=course_id,
-        top_k=CONCEPT_TOP_K if mode == "concept" else None,
-        scenario=scenario,
-        as_of=as_of,
+def _prepare_query(
+    question: str, mode: str, llm: OpenAIClient, course_id: str,
+    store: ConversationStore | None, conv_id: str | None,
+    scenario: str | None, as_of: str | None, scope_override: bool,
+) -> tuple[IntentDecision, list[dict] | None]:
+    _validate(mode, course_id)
+    _validate_as_of(as_of)
+    if store and conv_id:
+        conversation = store.get_conversation(conv_id)
+        if isinstance(conversation, dict) and conversation.get("course_id") != course_id:
+            raise BadRequestException("对话不属于当前课程")
+    history = _get_history(store, conv_id)
+    intent = resolve_intent(
+        question, requested_mode=mode, scenario=scenario, as_of=as_of,
+        previous=_previous_intent(store, conv_id), llm=None, scope_override=scope_override,
     )
-    if not _VISUAL_QUERY_RE.search(question):
-        return hits
+    _validate_as_of(intent.as_of)
+    logger.info("查询: course=%s intent=%s layer=%s mode=%s scenario=%s as_of=%s conv=%s q='%s...'",
+                course_id, intent.task, intent.layer, intent.mode, intent.scenario or "all",
+                intent.as_of or "latest", conv_id, question[:60])
+    return intent, history
 
-    visual_hits = retrieve_visual_evidence(
-        question,
-        vs,
-        course_id,
-        scenario=scenario,
-        as_of=as_of,
+
+def _finish_answer(
+    result: dict, intent: IntentDecision, store: ConversationStore | None,
+    conv_id: str | None, course_id: str, question: str,
+) -> AnswerData:
+    if result.get("response_kind") == "conversation" or (result.get("response_kind") == "clarification" and not result.get("task")):
+        intent = replace(intent, task="conversation", mode="qa", layer="llm_fallback" if result.get("agentic") else "rule",
+                         rationale="Agent 选择交流或需求澄清，无课程结论")
+    elif result.get("task"):
+        intent = replace(intent, task="question_generate" if result["task"]["kind"] != "study_goal" else "study_goal",
+                         rationale="Agent 执行受证据约束的课程任务")
+    execution = result.get('execution')
+    data = AnswerData(
+        answer=result["answer"],
+        citations=_citations(result["citations"], scenario=intent.scenario, as_of=intent.as_of),
+        grounded=result["grounded"], intent=_intent_data(intent),
+        steps=result.get("steps", []), tool_calls=result.get("tool_calls", []),
+        agentic=result.get("agentic", False), agent_used=result.get("agent_used", False),
+        response_kind=result.get("response_kind", "answer"), task=result.get("task"),
+        artifacts=result.get("artifacts") or [],
+        execution=execution,
     )
-    if not visual_hits:
-        return hits
-    seen = {str(hit.get("id") or "") for hit in hits}
-    for hit in visual_hits:
-        chunk_id = str(hit.get("id") or "")
-        if chunk_id and chunk_id not in seen:
-            seen.add(chunk_id)
-            hits.append(hit)
-    return hits
-
-
-def _needs_visual_verification(question: str, hits: list[dict]) -> bool:
-    if not _VISUAL_QUERY_RE.search(question):
-        return False
-    return any(
-        (hit.get("metadata") or {}).get("block_type") in {"image", "image_summary"}
-        and (hit.get("metadata") or {}).get("image_path")
-        for hit in hits
-    )
-
-
-def _verify_visual_evidence(question: str, hits: list[dict]) -> list[dict]:
-    """对最相关图表做一次面向当前问题的 VLM 复核；失败时保留入库摘要。"""
-    if not _needs_visual_verification(question, hits):
-        return hits
-    from src.dependencies import get_vision_client
-    from src.services.vision import DEFAULT_VISUAL_PROMPT
-
-    vision = get_vision_client()
-    if not vision.configured:
-        return hits
-
-    for index, hit in enumerate(hits):
-        metadata = hit.get("metadata") or {}
-        if metadata.get("block_type") not in {"image", "image_summary"}:
-            continue
-        image_path = str(metadata.get("image_path") or "")
-        if not image_path or not Path(image_path).is_file():
-            continue
-        prompt = (
-            f"{DEFAULT_VISUAL_PROMPT}\n\n"
-            f"当前用户问题：{question}\n"
-            "请优先直接回答这个问题；涉及读图数值时说明是近似读数。"
-        )
-        try:
-            analysis = vision.analyze_file(
-                image_path,
-                prompt=prompt,
-                caption=str(metadata.get("image_caption") or ""),
-                page=int(metadata["page"]) if int(metadata.get("page") or -1) > 0 else None,
-            )
-        except Exception as exc:
-            logger.warning("查询时图表复核失败，继续使用入库摘要: %s", exc)
-            return hits
-        enriched = dict(hit)
-        enriched["metadata"] = dict(metadata)
-        enriched["text"] = (
-            f"{hit.get('text', '').strip()}\n"
-            f"针对当前问题的视觉复核：{analysis}"
-        ).strip()
-        output = list(hits)
-        output[index] = enriched
-        logger.info(
-            "查询时图表复核完成: doc=%s page=%s model=%s",
-            metadata.get("doc_id"),
-            metadata.get("page"),
-            vision.model,
-        )
-        return output
-    return hits
+    if execution:
+        if execution['status'] == 'ready':
+            from src.services.storage.agent_run_store import AgentRunStore
+            data = AnswerData(**AgentRunStore(store).publish(execution['id'],course_id,data.model_dump()))
+    else:
+        _save_turn(store,conv_id,course_id,question,result['answer'],result['citations'],result['grounded'],intent.mode,intent=intent.to_dict())
+    return data
 
 
 def ask(
@@ -218,52 +127,19 @@ def ask(
     conversation_id: str | None = None,
     scenario: str | None = None,
     as_of: str | None = None,
+    scope_override: bool = False,
+    question_bank_store=None,
+    *, agentic=True, max_steps=None, top_k=None, score_threshold=None, breakpoints=None,
 ) -> AnswerData:
-    _validate(mode, course_id)
-    _validate_as_of(as_of)
-    history = _get_history(conversation_store, conversation_id)
-    intent = resolve_intent(
-        question, requested_mode=mode, scenario=scenario, as_of=as_of,
-        previous=_previous_intent(conversation_store, conversation_id), llm=llm,
+    intent, history = _prepare_query(
+        question, mode, llm, course_id, conversation_store, conversation_id, scenario, as_of, scope_override,
     )
-    mode, scenario, as_of = intent.mode, intent.scenario, intent.as_of
-    _validate_as_of(as_of)
-    logger.info("查询: course=%s intent=%s layer=%s mode=%s scenario=%s as_of=%s conv=%s q='%s...'", course_id, intent.task, intent.layer, mode, scenario or "all", as_of or "latest", conversation_id, question[:60])
-
-    if intent.task == "question_generate":
-        _save_turn(
-            conversation_store, conversation_id, course_id, question,
-            _QUESTION_BANK_ROUTE, [], False, mode, intent=intent.to_dict(),
-        )
-        return AnswerData(
-            answer=_QUESTION_BANK_ROUTE,
-            citations=[],
-            grounded=False,
-            intent=_intent_data(intent),
-        )
-
-    hits = _retrieve(question, mode, vs, course_id, scenario=scenario, as_of=as_of)
-    if not hits:
-        logger.info("拒答 threshold=%.4f", config.retrieval.score_threshold)
-        _save_turn(conversation_store, conversation_id, course_id, question, _REFUSAL, [], False, mode, intent=intent.to_dict())
-        return AnswerData(answer=_REFUSAL, citations=[], grounded=False, intent=_intent_data(intent))
-
-    hits = _verify_visual_evidence(question, hits)
-
-    if not llm.configured:
-        raise LLMAPIException("AI 服务未配置：请设置 LLM_API_KEY")
-
-    result = generate(context=hits, question=question, llm=llm, mode=mode, history=history)
-    _save_turn(
-        conversation_store, conversation_id, course_id,
-        question, result["answer"], result["citations"], result["grounded"], mode, intent=intent.to_dict(),
-    )
-    return AnswerData(
-        answer=result["answer"],
-        citations=_citations(result["citations"], scenario=scenario, as_of=as_of),
-        grounded=result["grounded"],
-        intent=_intent_data(intent),
-    )
+    options = _prepare_execution(question,intent,conversation_store,conversation_id,course_id,scope_override,
+                                 question_bank_store,agentic,llm,breakpoints,max_steps,top_k,score_threshold)
+    conversation_id = options.get('execution_request',{}).get('conversation_id',conversation_id)
+    result = run_agent(question, course_id, vs, llm, mode=intent.mode,
+                       scenario=intent.scenario, as_of=intent.as_of, history=history, **options)
+    return _finish_answer(result, intent, conversation_store, conversation_id, course_id, question)
 
 
 def ask_stream(
@@ -276,74 +152,131 @@ def ask_stream(
     conversation_id: str | None = None,
     scenario: str | None = None,
     as_of: str | None = None,
+    scope_override: bool = False,
+    question_bank_store=None,
+    breakpoints=None,
 ):
-    _validate(mode, course_id)
-    _validate_as_of(as_of)
-    history = _get_history(conversation_store, conversation_id)
-    intent = resolve_intent(
-        question, requested_mode=mode, scenario=scenario, as_of=as_of,
-        previous=_previous_intent(conversation_store, conversation_id), llm=llm,
+    intent, history = _prepare_query(
+        question, mode, llm, course_id, conversation_store, conversation_id, scenario, as_of, scope_override,
     )
-    mode, scenario, as_of = intent.mode, intent.scenario, intent.as_of
-    _validate_as_of(as_of)
-    logger.info("流式查询: course=%s intent=%s layer=%s mode=%s scenario=%s as_of=%s conv=%s q='%s...'", course_id, intent.task, intent.layer, mode, scenario or "all", as_of or "latest", conversation_id, question[:60])
-    if intent.task == "question_generate":
-        yield {"type": "phase", "phase": "routing", "intent": intent.to_dict()}
-        _save_turn(
-            conversation_store, conversation_id, course_id, question,
-            _QUESTION_BANK_ROUTE, [], False, mode, intent=intent.to_dict(),
-        )
-        yield {
-            "type": "done",
-            "data": AnswerData(
-                answer=_QUESTION_BANK_ROUTE,
-                citations=[],
-                grounded=False,
-                intent=_intent_data(intent),
-            ).model_dump(),
-        }
-        return
-    yield {"type": "phase", "phase": "retrieving", "intent": intent.to_dict()}
-
-    hits = _retrieve(question, mode, vs, course_id, scenario=scenario, as_of=as_of)
-    if not hits:
-        _save_turn(conversation_store, conversation_id, course_id, question, _REFUSAL, [], False, mode, intent=intent.to_dict())
-        yield {
-            "type": "done",
-            "data": AnswerData(answer=_REFUSAL, citations=[], grounded=False, intent=_intent_data(intent)).model_dump(),
-        }
-        return
-
-    if _needs_visual_verification(question, hits):
-        from src.dependencies import get_vision_client
-
-        if get_vision_client().configured:
-            yield {"type": "phase", "phase": "analyzing_visual"}
-            hits = _verify_visual_evidence(question, hits)
-
-    if not llm.configured:
-        yield {"type": "error", "message": "AI 服务未配置：请设置 LLM_API_KEY"}
-        return
-
-    yield {"type": "phase", "phase": "generating"}
-    for event in stream_generate(context=hits, question=question, llm=llm, mode=mode, history=history):
-        if event["type"] in {"phase", "delta"}:
+    options = _prepare_execution(question,intent,conversation_store,conversation_id,course_id,scope_override,
+                                 question_bank_store,True,llm,breakpoints)
+    conversation_id = options.get('execution_request',{}).get('conversation_id',conversation_id)
+    for event in run_agent_stream(question, course_id, vs, llm, mode=intent.mode,
+                                  scenario=intent.scenario, as_of=intent.as_of, history=history, **options):
+        if event["type"] == "done":
+            yield {"type": "done", "data": _finish_answer(
+                event["data"], intent, conversation_store, conversation_id, course_id, question,
+            ).model_dump()}
+        else:
+            if event["type"] == "phase":
+                event = {**event, "intent": intent.to_dict()}
             yield event
-        elif event["type"] == "done":
-            data = event["data"]
-            _save_turn(
-                conversation_store, conversation_id, course_id,
-                question, data["answer"], data["citations"], data["grounded"], mode, intent=intent.to_dict(),
-            )
-            yield {
-                "type": "done",
-                "data": AnswerData(
-                    answer=data["answer"],
-                    citations=_citations(data["citations"], scenario=scenario, as_of=as_of),
-                    grounded=data["grounded"],
-                    intent=_intent_data(intent),
-                ).model_dump(),
-            }
+
+
+def _durable_options(store, conv_id, course_id, question, intent, breakpoints, agentic, llm):
+    if not isinstance(store,ConversationStore) or not agentic or not llm.configured:
+        if breakpoints:
+            raise BadRequestException('节点断点需要持久化对话和支持工具决策的模型')
+        return {}
+    from src.services.storage.agent_run_store import AgentRunStore
+    from src.services.agent.execution import validate_breakpoints
+    if not question.strip():
+        raise BadRequestException('问题内容不能为空')
+    points = validate_breakpoints(breakpoints or [])
+    conv_id = conv_id or store.create_conversation(course_id,question[:40])['id']
+    model = getattr(llm,'model',None)
+    request = {'conversation_id':conv_id,'question':question,'course_id':course_id,'mode':intent.mode,
+               'scenario':intent.scenario,'as_of':intent.as_of,'intent':intent.to_dict(),'model':model if isinstance(model,str) else None}
+    runs = AgentRunStore(store)
+    # Reserve the conversation BEFORE any business task checkpoint can be changed.
+    return {'execution_store':runs,'execution_id':runs.create(conv_id,course_id,request,points),
+            'breakpoints':points,'execution_request':request}
+
+
+def _prepare_execution(question,intent,store,conv_id,course_id,scope_override,bank,agentic,llm,breakpoints,
+                       max_steps=None,top_k=None,score_threshold=None):
+    if max_steps is not None and max_steps <= 0:
+        raise BadRequestException('max_steps 必须大于 0')
+    durable = _durable_options(store,conv_id,course_id,question,intent,breakpoints,agentic,llm)
+    conv_id = durable.get('execution_request',{}).get('conversation_id',conv_id)
+    try:
+        return _execution_options(question,intent,store,conv_id,course_id,scope_override,bank,agentic,
+                                  max_steps,top_k,score_threshold,reservation=durable.get('execution_id')) | durable
+    except Exception:
+        if durable:
+            durable['execution_store'].control(durable['execution_id'],course_id,'cancel')
+        raise
+
+
+def resume_execution(run_id, course_id, mode, store, vs, llm, bank):
+    from src.services.storage.agent_run_store import AgentRunStore, conflict
+    from src.services.intent import IntentDecision
+    runs = AgentRunStore(store)
+    record = runs.read(run_id,course_id)
+    if record['published']:
+        return record['result']
+    request = record['request']
+    if record['status'] == 'ready':
+        result = record['result'] | {'execution':runs.public(run_id,course_id)}
+    else:
+        if not llm.configured:
+            raise conflict('恢复原图需要支持工具决策的模型')
+        if request.get('model') and request['model'] != getattr(llm,'model',None):
+            raise conflict('执行使用的模型已变更，请恢复原模型或取消后重新提问')
+        result = run_agent(request['question'],course_id,vs,llm,mode=request['mode'],
+            scenario=request['scenario'],as_of=request['as_of'],execution_store=runs,execution_resume=run_id,execution_mode=mode,
+            question_bank_store=bank,checkpoint=lambda value:store.checkpoint_agent_task(request['conversation_id'],course_id,value),
+            start_task=lambda value:store.save_agent_task(request['conversation_id'],course_id,value))
+    return _finish_answer(result,IntentDecision(**request['intent']),store,request['conversation_id'],course_id,request['question']).model_dump()
+
+
+def _execution_options(question, intent, store, conv_id, course_id, scope_override, bank,
+                       agentic=True, max_steps=None, top_k=None, score_threshold=None, reservation=None):
+    if agentic and isinstance(store,ConversationStore) and conv_id:
+        from src.services.storage.agent_run_store import AgentRunStore, conflict
+        runs = AgentRunStore(store)
+        existing = runs.list_public(conv_id,course_id)
+        if any(run['id'] != reservation and run['status'] in ('running','paused','interrupted','failed','ready') for run in existing):
+            raise conflict('当前对话仍有未结束的执行，请继续或取消后再提问')
+        for run in existing:
+            if run['status'] == 'cancelled' and run['control'] == 'cancel':
+                runs.cancelled_task(run['id'],course_id)
+    task, checkpoint = _prepare_task(question, intent, store, conv_id, course_id, scope_override) if agentic else (None, None)
+    previous = store.get_agent_task(conv_id, course_id) if store and conv_id and agentic else None
+    previous = previous if isinstance(previous, dict) else None
+    if store and conv_id:
+        def start_task(value):
+            store.save_agent_task(conv_id, course_id, value)
+        if checkpoint is None:
+            checkpoint = lambda value: store.checkpoint_agent_task(conv_id, course_id, value)
+    else:
+        start_task = None
+    return {"task": task, "checkpoint": checkpoint, "start_task": start_task,
+            "previous_task": previous, "scope_override": scope_override, "question_bank_store": bank, "agentic": agentic,
+            "max_steps": max_steps if max_steps is not None else (6 if agentic else 3),
+            "top_k": top_k, "score_threshold": score_threshold}
+
+
+def _prepare_task(question, intent, store, conv_id, course_id, scope_override=False):
+    if intent.task == "conversation":
+        return None, None
+    previous = store.get_agent_task(conv_id, course_id) if store and conv_id else None
+    previous = previous if isinstance(previous, dict) else None
+    inheriting = bool(previous and (previous.get("status") == "waiting_input" or study_goals.is_followup(question, previous) or
+                                  re.match(r"^\s*(?:请)?(?:继续|重试|恢复|保存|取消|停止)", question)))
+    scenario = intent.scenario if scope_override or intent.scenario is not None or not inheriting else previous.get("scenario")
+    as_of = intent.as_of if scope_override or intent.as_of is not None or not inheriting else previous.get("as_of")
+    task = study_goals.prepare(question, previous, course_id=course_id, scenario=scenario, as_of=as_of)
+    if task is None:
+        task = plan_task(question, previous if not previous or previous.get("kind") != "study_goal" else None, requested=intent.task == "question_generate" and intent.layer != "context",
+                     course_id=course_id, scenario=scenario, as_of=as_of)
+    def save_checkpoint(value):
+        return store.checkpoint_agent_task(conv_id, course_id, value)
+    checkpoint = save_checkpoint if store and conv_id else None
+    if task and checkpoint:
+        store.save_agent_task(conv_id, course_id, task)
+    return task, checkpoint
 
 
 def _get_history(store: ConversationStore | None, conv_id: str | None) -> list[dict] | None:

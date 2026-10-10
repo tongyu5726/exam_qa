@@ -8,7 +8,6 @@ from pathlib import Path
 
 from src.exceptions import BadRequestException, UnsupportedFormatException
 from src.services.parsing_adapters.models import (
-    PDFParseQuality,
     ParsedBlock,
     ParsedDocument,
     ParsedPage,

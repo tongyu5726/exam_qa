@@ -1,8 +1,7 @@
 """对话主链：流式 / qa|concept|chapter / 拒答 / prompt。"""
 
 import json
-import shutil
-import tempfile
+from types import SimpleNamespace
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -15,13 +14,11 @@ from src.main import app
 from src.services import generation
 from src.exceptions import LLMAPIException
 from src.services.query import (
-    CONCEPT_TOP_K,
     _citations,
-    _retrieve,
-    _verify_visual_evidence,
     ask,
     ask_stream,
 )
+from src.services.rag import CONCEPT_TOP_K, _retrieve, _verify_visual_evidence
 from src.services.storage.catalog_store import (
     DEFAULT_COLLEGE_ID,
     DEFAULT_COURSE_ID,
@@ -29,6 +26,57 @@ from src.services.storage.catalog_store import (
 )
 
 client = TestClient(app)
+
+
+@pytest.mark.parametrize("kind", ["answer", "refusal", "routing"])
+def test_sync_stream_results_and_saved_turns_match(monkeypatch, kind, query_chain):
+    from src.services import query
+
+    save = MagicMock()
+    monkeypatch.setattr(query, "_save_turn", save)
+    if kind == "refusal":
+        query_chain.retrieve.return_value = []
+    question = "请生成练习题" if kind == "routing" else "卷积定义"
+    args = dict(question=question, mode="qa", vs=query_chain.vs, llm=query_chain.llm,
+                course_id="course", scenario="all", as_of="2026-10-04")
+    sync = ask(**args)
+    events = list(ask_stream(**args))
+    stream_data, sync_data = events[-1]["data"], sync.model_dump()
+    if kind == "routing":
+        assert stream_data["response_kind"] == "clarification"
+        stream_data["task"].pop("id")
+        sync_data["task"].pop("id")
+    assert stream_data == sync_data
+    assert save.call_count == 2
+    assert save.call_args_list[0] == save.call_args_list[1]
+
+
+def test_stream_emits_retrieving_before_running_retrieval(monkeypatch):
+    from src.services import rag
+
+    retrieval = MagicMock(return_value=[])
+    monkeypatch.setattr(rag, "_retrieve", retrieval)
+    llm = MagicMock(configured=True)
+    llm.chat_with_tools.side_effect = [
+        {"content": "", "tool_calls": [{"id": "rag", "name": "rag_answer", "arguments": '{"query":"卷积"}'}]},
+        {"content": "<NO_EVIDENCE>", "tool_calls": []},
+    ]
+    events = ask_stream("卷积", "qa", MagicMock(), llm, "course")
+    assert next(events)["phase"] == "routing"
+    retrieval.assert_not_called()
+    assert next(events)["phase"] == "reasoning"
+    assert next(events)["phase"] == "retrieving"
+    retrieval.assert_not_called()
+    assert list(events)[-1]["type"] == "done"
+    retrieval.assert_called_once()
+
+
+def test_citations_keep_nullable_legacy_metadata_compatibility():
+    citation = _citations([{"doc_id": None, "source_file": "old.md", "snippet": "正文",
+                            "score": .8, "authority_level": None, "parse_quality": None}])[0]
+    assert citation.doc_id == ""
+    assert citation.authority_level == 30
+    assert citation.parse_quality == 0
 
 _ASK = {
     "question": "测试",
@@ -132,9 +180,9 @@ def test_visual_question_appends_dedicated_chart_recall(monkeypatch):
             "page": 13,
         },
     }
-    monkeypatch.setattr("src.services.query.retrieve", lambda **_kwargs: [body])
+    monkeypatch.setattr("src.services.rag.retrieve", lambda **_kwargs: [body])
     monkeypatch.setattr(
-        "src.services.query.retrieve_visual_evidence",
+        "src.services.rag.retrieve_visual_evidence",
         lambda *_args, **_kwargs: [chart],
     )
 
@@ -171,62 +219,33 @@ class TestAskStream:
                 else:
                     app.dependency_overrides[key] = value
             catalog.close()
-            conversations.close()
 
     def test_refusal_emits_done(self):
-        with patch("src.services.query.retrieve", return_value=[]):
+        with patch("src.services.rag.retrieve", return_value=[]):
             with client.stream("POST", "/api/v1/ask", json=_ASK) as resp:
                 assert resp.status_code == 200
                 body = "".join(resp.iter_text())
                 assert '"type": "done"' in body
                 assert "未找到相关内容" in body
 
-    def test_deltas_then_done(self):
-        def fake_stream(*_a, **_k):
-            yield {"type": "delta", "text": "你好"}
-            yield {
-                "type": "done",
-                "data": {
-                    "answer": "你好",
-                    "citations": [
-                        {
-                            "source_file": "ch1.md",
-                            "page": 1,
-                            "snippet": "片段",
-                            "score": 0.8,
-                        }
-                    ],
-                    "grounded": True,
-                },
-            }
-
-        mock_llm = MagicMock()
-        mock_llm.configured = True
-        app.dependency_overrides[get_llm_client] = lambda: mock_llm
+    def test_deltas_then_done(self, query_chain):
+        app.dependency_overrides[get_llm_client] = lambda: query_chain.llm
         try:
-            with patch("src.services.query.retrieve", return_value=_hits()):
-                with patch(
-                    "src.services.query.stream_generate", side_effect=fake_stream
-                ):
-                    with client.stream("POST", "/api/v1/ask", json=_ASK) as resp:
-                        events = [
-                            json.loads(line[6:])
-                            for line in resp.iter_lines()
-                            if line.startswith("data: ")
-                        ]
-            types = [e["type"] for e in events]
+            with client.stream("POST", "/api/v1/ask", json=_ASK) as resp:
+                events = [json.loads(line[6:]) for line in resp.iter_lines() if line.startswith("data: ")]
+            types = [event["type"] for event in events]
             assert "phase" in types and "delta" in types and "done" in types
         finally:
             app.dependency_overrides.pop(get_llm_client, None)
 
     def test_non_stream_json_refusal(self):
-        with patch("src.services.query.retrieve", return_value=[]):
+        with patch("src.services.rag.retrieve", return_value=[]):
             r = client.post("/api/v1/ask", json={**_ASK, "stream": False})
         assert r.status_code == 200
         assert r.json()["data"]["grounded"] is False
 
     def test_concept_mode_stream_accepted(self):
-        with patch("src.services.query.retrieve", return_value=[]):
+        with patch("src.services.rag.retrieve", return_value=[]):
             with client.stream(
                 "POST",
                 "/api/v1/ask",
@@ -236,7 +255,7 @@ class TestAskStream:
                 assert "未找到相关内容" in "".join(resp.iter_text())
 
     def test_question_generation_routes_without_retrieval_or_llm(self):
-        with patch("src.services.query.retrieve") as mock_retrieve:
+        with patch("src.services.rag.retrieve") as mock_retrieve:
             with client.stream(
                 "POST",
                 "/api/v1/ask",
@@ -274,6 +293,25 @@ class TestStreamGeneration:
             list(generation.stream_generate(_hits(), "测试", llm))
 
 
+@pytest.fixture
+def query_chain(monkeypatch):
+    """各用例共享准备过程，每次仍获得独立的返回数据和调用记录。"""
+    from src.services import rag as query
+
+    result = {"answer": "定义", "citations": [{"source_file": "a.md", "snippet": "证据", "score": .9}],
+              "grounded": True}
+    chain = SimpleNamespace(vs=MagicMock(), llm=MagicMock(configured=True), result=result,
+                            retrieve=MagicMock(return_value=_hits()),
+                            generate=MagicMock(return_value=result),
+                            stream=MagicMock(side_effect=lambda **_: iter([
+                                {"type": "delta", "text": result["answer"]}, {"type": "done", "data": result},
+                            ])))
+    chain.llm.chat_with_tools.side_effect = LLMAPIException("tools unsupported")
+    for name, mock in (("retrieve", chain.retrieve), ("generate", chain.generate), ("stream_generate", chain.stream)):
+        monkeypatch.setattr(query, name, mock)
+    return chain
+
+
 class TestAskModes:
     def test_auto_mode_routes_chapter_intent(self):
         vs = MagicMock()
@@ -290,20 +328,16 @@ class TestAskModes:
         assert out.intent.layer == "rule"
         vs.get_by_chapter.assert_called_once_with(DEFAULT_COURSE_ID, "请概述第3章")
 
-    def test_concept_prompt_structure(self):
-        msgs = generation._build_messages(
-            [
-                {
-                    "text": "卷积定理：时域卷积对应频域相乘",
-                    "metadata": {"source_file": "a.md"},
-                }
-            ],
-            "卷积定理",
-            mode="concept",
-        )
-        assert "定义" in msgs[0]["content"]
-        assert "公式" in msgs[0]["content"]
-        assert "例题" in msgs[0]["content"]
+    @pytest.mark.parametrize("mode,text,question,metadata,required", [
+        ("concept", "卷积定理：时域卷积对应频域相乘", "卷积定理",
+         {"source_file": "a.md"}, ["定义", "公式", "例题"]),
+        ("chapter", "本章讲时移", "第3章",
+         {"source_file": "a.md", "chapter": "第3章"}, ["知识清单", "重点", "自测"]),
+    ])
+    def test_mode_prompt_structure(self, mode, text, question, metadata, required):
+        msgs = generation._build_messages([{"text": text, "metadata": metadata}], question, mode=mode)
+        for term in required:
+            assert term in msgs[0]["content"]
 
     def test_formula_evidence_is_explicitly_labeled_for_llm(self):
         msgs = generation._build_messages(
@@ -337,129 +371,28 @@ class TestAskModes:
         assert "去重后完整列出" in msgs[0]["content"]
         assert "不要在正文中输出【……】来源标签" in msgs[0]["content"]
 
-    def test_chapter_prompt_structure(self):
-        msgs = generation._build_messages(
-            [
-                {
-                    "text": "本章讲时移",
-                    "metadata": {"source_file": "a.md", "chapter": "第3章"},
-                }
-            ],
-            "第3章",
-            mode="chapter",
-        )
-        assert "知识清单" in msgs[0]["content"]
-        assert "重点" in msgs[0]["content"]
-        assert "自测" in msgs[0]["content"]
-
-    def test_concept_uses_larger_top_k(self):
-        llm = MagicMock()
-        llm.configured = True
-        hits = [{"text": "定义…", "score": 0.9, "metadata": {"source_file": "a.md"}}]
-        with patch("src.services.query.retrieve", return_value=hits) as mock_ret:
-            with patch(
-                "src.services.query.generate",
-                return_value={
-                    "answer": "定义…",
-                    "citations": [
-                        {
-                            "source_file": "a.md",
-                            "page": None,
-                            "snippet": "定义",
-                            "score": 0.9,
-                        }
-                    ],
-                    "grounded": True,
-                },
-            ) as mock_gen:
-                out = ask(
-                    "卷积定理",
-                    mode="concept",
-                    vs=MagicMock(),
-                    llm=llm,
-                    course_id=DEFAULT_COURSE_ID,
-                )
-        assert mock_ret.call_args.kwargs["top_k"] == CONCEPT_TOP_K
-        assert mock_gen.call_args.kwargs["mode"] == "concept"
+    def test_concept_uses_larger_top_k(self, query_chain):
+        out = ask("卷积定理", "concept", query_chain.vs, query_chain.llm, DEFAULT_COURSE_ID)
+        assert query_chain.retrieve.call_args.kwargs["top_k"] == CONCEPT_TOP_K
+        assert query_chain.stream.call_args.kwargs["mode"] == "concept"
         assert out.grounded is True
 
-    def test_ask_stream_concept_passes_mode(self):
-        hits = [{"text": "x", "score": 0.9, "metadata": {"source_file": "a.md"}}]
-        llm = MagicMock()
-        llm.configured = True
-
-        def _fake_stream(**kwargs):
-            assert kwargs["mode"] == "concept"
-            yield {"type": "delta", "text": "定"}
-            yield {
-                "type": "done",
-                "data": {
-                    "answer": "定义",
-                    "citations": [
-                        {
-                            "source_file": "a.md",
-                            "page": None,
-                            "snippet": "x",
-                            "score": 0.9,
-                        }
-                    ],
-                    "grounded": True,
-                },
-            }
-
-        with patch("src.services.query.retrieve", return_value=hits) as mock_ret:
-            with patch("src.services.query.stream_generate", side_effect=_fake_stream):
-                events = list(
-                    ask_stream(
-                        "卷积",
-                        mode="concept",
-                        vs=MagicMock(),
-                        llm=llm,
-                        course_id=DEFAULT_COURSE_ID,
-                    )
-                )
-        assert mock_ret.call_args.kwargs["top_k"] == CONCEPT_TOP_K
+    def test_ask_stream_concept_passes_mode(self, query_chain):
+        events = list(ask_stream("卷积", "concept", query_chain.vs, query_chain.llm, DEFAULT_COURSE_ID))
+        assert query_chain.retrieve.call_args.kwargs["top_k"] == CONCEPT_TOP_K
+        assert query_chain.stream.call_args.kwargs["mode"] == "concept"
         assert events[0]["type"] == "phase"
         assert events[-1]["type"] == "done"
 
-    def test_chapter_skips_retrieve(self):
-        vs = MagicMock()
-        vs.get_by_chapter.return_value = [
-            {
-                "id": "1",
-                "text": "时移性质",
-                "score": 0.0,
-                "metadata": {"source_file": "a.md", "chapter": "第3章"},
-            }
+    def test_chapter_skips_retrieve(self, query_chain):
+        query_chain.vs.get_by_chapter.return_value = [
+            {"id": "1", "text": "时移性质", "score": 0.0,
+             "metadata": {"source_file": "a.md", "chapter": "第3章"}},
         ]
-        llm = MagicMock()
-        llm.configured = True
-        with patch("src.services.query.retrieve") as mock_ret:
-            with patch(
-                "src.services.query.generate",
-                return_value={
-                    "answer": "清单…",
-                    "citations": [
-                        {
-                            "source_file": "a.md",
-                            "page": None,
-                            "snippet": "时移",
-                            "score": 1.0,
-                        }
-                    ],
-                    "grounded": True,
-                },
-            ) as mock_gen:
-                out = ask(
-                    "第3章",
-                    mode="chapter",
-                    vs=vs,
-                    llm=llm,
-                    course_id=DEFAULT_COURSE_ID,
-                )
-        mock_ret.assert_not_called()
-        vs.get_by_chapter.assert_called_once_with(DEFAULT_COURSE_ID, "第3章")
-        assert mock_gen.call_args.kwargs["mode"] == "chapter"
+        out = ask("第3章", "chapter", query_chain.vs, query_chain.llm, DEFAULT_COURSE_ID)
+        query_chain.retrieve.assert_not_called()
+        query_chain.vs.get_by_chapter.assert_called_once_with(DEFAULT_COURSE_ID, "第3章")
+        assert query_chain.stream.call_args.kwargs["mode"] == "chapter"
         assert out.grounded is True
 
     def test_chapter_refusal_when_missing(self):
@@ -480,27 +413,11 @@ class TestChapterStore:
     """chapter 聚合：精确 / 模糊匹配，防子串误伤。"""
 
     def test_get_by_chapter_exact_and_fuzzy(self, vector_store):
+        base = {"doc_id": "1", "source_file": "a.md", "course": DEFAULT_COURSE_NAME,
+                "course_id": DEFAULT_COURSE_ID, "college_id": DEFAULT_COLLEGE_ID}
         chunks = [
-            {
-                "doc_id": "1",
-                "source_file": "a.md",
-                "chunk_index": 0,
-                "course": DEFAULT_COURSE_NAME,
-                "course_id": DEFAULT_COURSE_ID,
-                "college_id": DEFAULT_COLLEGE_ID,
-                "text": "傅里叶定义",
-                "chapter": "第3章 傅里叶变换",
-            },
-            {
-                "doc_id": "1",
-                "source_file": "a.md",
-                "chunk_index": 1,
-                "course": DEFAULT_COURSE_NAME,
-                "course_id": DEFAULT_COURSE_ID,
-                "college_id": DEFAULT_COLLEGE_ID,
-                "text": "卷积",
-                "chapter": "第4章 卷积",
-            },
+            {**base, "chunk_index": index, "text": text, "chapter": chapter}
+            for index, text, chapter in [(0, "傅里叶定义", "第3章 傅里叶变换"), (1, "卷积", "第4章 卷积")]
         ]
         vector_store.upsert(chunks, [[0.1] * 8, [0.2] * 8])
         exact = vector_store.get_by_chapter(DEFAULT_COURSE_ID, "第3章 傅里叶变换")
@@ -509,18 +426,8 @@ class TestChapterStore:
         assert len(fuzzy) == 1
 
         vector_store.upsert(
-            [
-                {
-                    "doc_id": "2",
-                    "source_file": "b.md",
-                    "chunk_index": 0,
-                    "course": DEFAULT_COURSE_NAME,
-                    "course_id": DEFAULT_COURSE_ID,
-                    "college_id": DEFAULT_COLLEGE_ID,
-                    "text": "第九章正文",
-                    "chapter": "第9章 采样",
-                }
-            ],
+            [{**base, "doc_id": "2", "source_file": "b.md", "chunk_index": 0,
+              "text": "第九章正文", "chapter": "第9章 采样"}],
             [[0.3] * 8],
         )
         assert vector_store.get_by_chapter(DEFAULT_COURSE_ID, "第99章") == []
@@ -532,14 +439,11 @@ class TestChapterStore:
         ]
 
 @pytest.fixture
-def conv_store():
+def conv_store(tmp_path):
     from src.services.storage.conversation_store import ConversationStore
 
-    tmp = tempfile.mkdtemp()
-    store = ConversationStore(str(Path(tmp) / "test_conv.db"))
-    yield store
-    store.close()
-    shutil.rmtree(tmp, ignore_errors=True)
+    store = ConversationStore(str(tmp_path / "test_conv.db"))
+    return store
 
 
 class TestSaveTurn:
@@ -562,35 +466,9 @@ class TestSaveTurn:
             is False
         )
 
-    def test_ask_returns_answer_when_save_fails(self):
-        llm = MagicMock()
-        llm.configured = True
-        hits = [{"text": "定义…", "score": 0.9, "metadata": {"source_file": "a.md"}}]
+    def test_ask_returns_answer_when_save_fails(self, query_chain):
         store = MagicMock()
         store.append_message.side_effect = RuntimeError("db down")
-        with patch("src.services.query.retrieve", return_value=hits):
-            with patch(
-                "src.services.query.generate",
-                return_value={
-                    "answer": "定义…",
-                    "citations": [
-                        {
-                            "source_file": "a.md",
-                            "page": None,
-                            "snippet": "x",
-                            "score": 0.9,
-                        }
-                    ],
-                    "grounded": True,
-                },
-            ):
-                out = ask(
-                    "卷积",
-                    mode="qa",
-                    vs=MagicMock(),
-                    llm=llm,
-                    course_id=DEFAULT_COURSE_ID,
-                    conversation_store=store,
-                    conversation_id="conv-1",
-                )
-        assert out.answer == "定义…"
+        out = ask("卷积", "qa", query_chain.vs, query_chain.llm, DEFAULT_COURSE_ID,
+                  conversation_store=store, conversation_id="conv-1")
+        assert out.answer == query_chain.result["answer"]

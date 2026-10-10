@@ -48,6 +48,9 @@ desktop.ini
 .vscode/
 *.code-workspace
 .cursor/
+!.cursor/mcp.json
+!.cursor/rules/
+!.cursor/rules/**
 
 # Brainstorm visual companion
 .superpowers/
@@ -70,3 +73,6 @@ desktop.ini
 *.key
 
 pytest_v3.txt
+
+# 一次性开发任务产物；保留证据归档到 docs/artifacts/quality/
+/tasks/

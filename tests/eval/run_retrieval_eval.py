@@ -11,7 +11,7 @@ import tempfile
 from collections import defaultdict
 from pathlib import Path
 
-from src.services.eval_metrics import aggregate_metrics
+from tests.eval.metrics import aggregate_metrics
 from src.services.retrieval import retrieve
 from src.services.storage.catalog_store import DEFAULT_COURSE_ID
 from src.services.storage.vector_store import ChromaVectorStore

@@ -74,13 +74,13 @@ class TestAgentLoop:
         assert len(result["tool_calls"]) == 1
         assert llm.chat_with_tools.call_count == 2
 
-    def test_agentic_unconfigured_downgrades_to_fixed_agent(self):
-        vs = MagicMock()
+    def test_agentic_unconfigured_falls_back_to_registered_rag(self):
         llm = _fake_llm(configured=False)
-        with patch("src.services.agent.tools.retrieve_tool", return_value=[_hit(0.8)]):
-            with patch("src.services.generation.generate", return_value={"answer": "答案", "citations": [], "grounded": True}):
-                result = run_agent("问题", "course-default", vs, llm, agentic=True)
+        with patch("src.services.rag._retrieve", return_value=[]):
+            result = run_agent("问题", "course-default", MagicMock(), llm)
         assert result["agentic"] is False
+        assert result["tool_calls"][0]["name"] == "rag_answer"
+        assert result["grounded"] is False
         llm.chat_with_tools.assert_not_called()
 
     def test_generate_when_sufficient(self):
@@ -93,7 +93,7 @@ class TestAgentLoop:
             ) as gen:
                 result = run_agent(
                     "问题", "course-default", vs, llm,
-                    max_steps=3, top_k=5, score_threshold=0.25,
+                    max_steps=3, top_k=5, score_threshold=0.25, agentic=False,
                 )
         assert result["grounded"] is True
         assert result["answer"] == "答案"
@@ -117,7 +117,7 @@ class TestAgentLoop:
             ):
                 result = run_agent(
                     "问题", "course-default", vs, llm,
-                    max_steps=3, top_k=5, score_threshold=0.25,
+                    max_steps=3, top_k=5, score_threshold=0.25, agentic=False,
                 )
         assert result["grounded"] is True
         assert ret.call_count == 2
@@ -133,7 +133,7 @@ class TestAgentLoop:
         ) as ret:
             result = run_agent(
                 "问题", "course-default", vs, llm,
-                max_steps=2, top_k=5, score_threshold=0.25,
+                max_steps=2, top_k=5, score_threshold=0.25, agentic=False,
             )
         assert result["grounded"] is False
         assert result["answer"] == "资料库中未找到相关内容"
@@ -149,7 +149,7 @@ class TestAgentLoop:
         ) as ret:
             result = run_agent(
                 "问题", "course-default", vs, llm,
-                max_steps=3, top_k=5, score_threshold=0.25,
+                max_steps=3, top_k=5, score_threshold=0.25, agentic=False,
             )
         assert result["grounded"] is False
         assert ret.call_count == 1
@@ -182,7 +182,7 @@ class TestAgentApi:
                 ):
                     r = client.post(
                         "/api/v1/agent/run",
-                        json={"question": "问题", "course_id": "course-default"},
+                        json={"question": "问题", "course_id": "course-default", "agentic": False},
                     )
         finally:
             app.dependency_overrides.pop(get_vector_store, None)
@@ -205,7 +205,7 @@ class TestAgentApi:
         app.dependency_overrides[get_llm_client] = lambda: llm
         app.dependency_overrides[get_catalog_store] = lambda: catalog
         try:
-            with patch("src.apis.v1.agent.run_agent", return_value={
+            with patch("src.services.query.run_agent", return_value={
                 "answer": "答案", "citations": [], "grounded": True, "steps": [],
                 "tool_calls": [], "agentic": True, "agent_used": True,
             }) as runner:

@@ -7,6 +7,14 @@ from typing import Annotated, TypedDict
 
 
 class AgentState(TypedDict, total=False):
+    task: dict | None
+    scope_override: bool
+    previous_task: dict | None
+    task_context_id: str
+    direct_response: dict | None
+    response_kind: str
+    artifacts: list[dict]
+    history: list[dict] | None
     question: str
     course_id: str
     mode: str
@@ -26,5 +34,7 @@ class AgentState(TypedDict, total=False):
     as_of: str | None
     messages: Annotated[list[dict], operator.add]
     pending_tool_calls: list[dict]
+    tool_batch_size: int
+    used_fallback: bool
     tool_calls: Annotated[list[dict], operator.add]
     tool_rounds: int

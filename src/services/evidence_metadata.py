@@ -72,6 +72,17 @@ def normalize_scope(value: str | None) -> str:
     return text or "all"
 
 
+def maintained_scopes(documents: list[dict]) -> list[str]:
+    """仅公开已入库、活跃资料中的人工场景键。"""
+    return sorted({
+        normalize_scope(doc.get("applicability_scope"))
+        for doc in documents
+        if doc.get("metadata_source") == "manual"
+        and doc.get("status") == "done" and doc.get("is_active", True)
+        and normalize_scope(doc.get("applicability_scope")) != "all"
+    })
+
+
 def extract_evidence_metadata(text: str, filename: str = "") -> EvidenceMetadata:
     sample = (text or "")[:120_000]
     version = ""

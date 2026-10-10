@@ -184,6 +184,19 @@ async def open_document_source(
     )
 
 
+@router.get("/scenarios")
+async def evidence_scenarios(
+    course_id: str,
+    ds: SQLiteDocStore = Depends(get_doc_store),
+    catalog: CatalogStore = Depends(get_catalog_store),
+    _user=Depends(get_current_user),
+):
+    from src.services.evidence_metadata import maintained_scopes
+
+    catalog.require_course(course_id)
+    return {"code": status.HTTP_200_OK, "data": {"items": maintained_scopes(ds.list(course_id=course_id))}}
+
+
 @router.patch("/{doc_id}/evidence")
 async def update_document_evidence(
     doc_id: int,

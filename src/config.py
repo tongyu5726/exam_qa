@@ -2,7 +2,6 @@
 
 import os
 from dataclasses import dataclass, field
-from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -259,6 +258,15 @@ class ParsingConfig:
 
 
 @dataclass
+class PracticeConfig:
+    """本地复习的确定性窗口与展示上限。"""
+
+    review_days: int = 7
+    recommendation_limit: int = 5
+    history_limit: int = 50
+
+
+@dataclass
 class AppConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     # 注册表活跃名，对应 data/llm_providers.json
@@ -269,6 +277,7 @@ class AppConfig:
     storage: StorageConfig = field(default_factory=StorageConfig)
     chunk: ChunkConfig = field(default_factory=ChunkConfig)
     retrieval: RetrievalConfig = field(default_factory=RetrievalConfig)
+    practice: PracticeConfig = field(default_factory=PracticeConfig)
     parsing: ParsingConfig = field(default_factory=ParsingConfig)
     proxy: ProxyConfig = field(default_factory=ProxyConfig)
     debug: bool = field(default_factory=lambda: os.getenv("DEBUG", "false").lower() == "true")
@@ -325,6 +334,8 @@ class AppConfig:
             raise ValueError("visual_max_tokens 必须 > 0")
         if self.max_upload_mb <= 0:
             raise ValueError("max_upload_mb 必须大于 0")
+        if not 1 <= self.port <= 65535:
+            raise ValueError("PORT 须在 1～65535")
         if self.retrieval.top_k <= 0:
             raise ValueError("top_k 必须大于 0")
         if not (0 <= self.retrieval.score_threshold <= 1):
